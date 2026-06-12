@@ -73,6 +73,7 @@ static CoinData s_coinCache[COIN_MAX];   // runtime cache for all assigned coins
 static int      s_coinCount = 0;
 static bool     s_fromCache = false;
 static char     s_syncTime[12] = "--:--";
+static char     s_apiKey[48] = "";       // loaded from /apikey.txt on SD
 static int      s_fgValue   = -1;
 static char     s_fgLabel[16] = "";
 
@@ -334,8 +335,9 @@ static bool fetchCoins() {
     http.begin(client, url);
     http.setTimeout(15000);
     http.addHeader("Accept", "application/json");
+    if (s_apiKey[0]) http.addHeader("x-cg-demo-api-key", s_apiKey);
 #ifdef COINGECKO_API_KEY
-    http.addHeader("x-cg-demo-api-key", COINGECKO_API_KEY);
+    else http.addHeader("x-cg-demo-api-key", COINGECKO_API_KEY);
 #endif
     int code = http.GET();
     if (code != 200) { http.end(); return false; }
@@ -490,6 +492,22 @@ void cryptoInit() {
         nvsPutInt("cfg_ver", CRYPTO_CFG_VERSION);
     }
 
+    // Load API key from SD (if present) — overrides compile-time define
+    if (SD.begin(SD_CS)) {
+        if (SD.exists("/apikey.txt")) {
+            File f = SD.open("/apikey.txt", FILE_READ);
+            if (f) {
+                String key = f.readStringUntil('\n');
+                key.trim();
+                if (key.length() > 0) {
+                    strlcpy(s_apiKey, key.c_str(), sizeof(s_apiKey));
+                    Serial.println("CoinGecko API key loaded from SD");
+                }
+                f.close();
+            }
+        }
+        SD.end();
+    }
     cryptoLoadCustomCoins();  // reads /custom_coins.txt from SD
     cryptoPagesLoad();
     // Don't fetch here — caller decides when (after WiFi connects)

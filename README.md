@@ -94,6 +94,7 @@ esptool.py --chip esp32 write_flash 0x0 CYD-Crypto-Tracker-2usb.bin
 **SD card files (place on root):**
 - `wifi.txt` — WiFi credentials: line 1 = SSID, line 2 = password
 - `custom_coins.txt` — optional custom CoinGecko IDs (one per line)
+- `apikey.txt` — optional CoinGecko API key (single line, avoids anonymous rate limits)
 - `cache/btc.json` — auto-generated price cache
 
 ## Serial Commands
