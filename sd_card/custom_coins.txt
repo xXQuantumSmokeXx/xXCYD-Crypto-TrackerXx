@@ -1,0 +1,3 @@
+# Custom coins for CYD-Crypto-Tracker
+# Format: coin_id,SYMBOL  or  coin_id
+# CoinGecko IDs: https://www.coingecko.com/en/coins/list
