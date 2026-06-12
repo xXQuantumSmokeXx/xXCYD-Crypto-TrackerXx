@@ -10,9 +10,9 @@ Real-time cryptocurrency tracker for the ESP32-32E (1-USB) and 2USB CYD (Cheap Y
 |--------|--------|--------|
 | ![Page 1](ScreenShots/Page1.png) | ![Page 2](ScreenShots/Page2.png) | ![Page 3](ScreenShots/Page3.png) |
 
-| Page 4 | Settings |
-|--------|----------|
-| ![Page 4](ScreenShots/Page4.png) | ![Settings](ScreenShots/Settings.png) |
+| Page 4 | Coin Picker | Settings |
+|--------|-------------|----------|
+| ![Page 4](ScreenShots/Page4.png) | ![Coin Picker](ScreenShots/CoinPicker.png) | ![Settings](ScreenShots/Settings.png) |
 
 ## Features
 
@@ -150,6 +150,8 @@ sd_card/
 
 ## Credits
 
-- xXMayDayXx
-- xXQuantum-SmokeXx
-- CoinGecko API
+**Check out my other projects:**
+- [xXCYD-PokerXx](https://github.com/xXQuantumSmokeXx/xXCYD-PokerXx) — classic Joker Poker + Texas Hold'em for CYD
+- [xXCYD-Weather-StationXx](https://github.com/xXQuantumSmokeXx/xXCYD-Weather-StationXx) — tactical weather & monitoring station
+
+Built by xXQuantum-SmokeXx, with development assistance from Codex & Claude Code.

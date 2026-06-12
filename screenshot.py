@@ -56,6 +56,9 @@ SCREENS = {
     "p5": ("Page 5", b"4", "ScreenShots\\screen_page5.bmp"),
     "5":  ("Settings", b"5", "ScreenShots\\screen_settings.bmp"),
     "settings": ("Settings", b"5", "ScreenShots\\screen_settings.bmp"),
+    "c":  ("Coin Picker", b"C", "ScreenShots\\screen_coinpicker.bmp"),
+    "picker":  ("Coin Picker", b"C", "ScreenShots\\screen_coinpicker.bmp"),
+    "coins":   ("Coin Picker", b"C", "ScreenShots\\screen_coinpicker.bmp"),
     "current":  ("current", None, "ScreenShots\\screen.bmp"),
     "now":      ("current", None, "ScreenShots\\screen.bmp"),
 }
@@ -117,6 +120,7 @@ def ask_interactive():
     print("  3 = PAGE 4")
     print("  4 = PAGE 5")
     print("  5 = SETTINGS")
+    print("  C = COIN PICKER")
     screen_arg = input("Screen to capture [current]: ").strip() or "current"
     screen_name, screen_cmd, default_out = normalize_screen(screen_arg)
     outfile = input(f"Output file [{default_out}]: ").strip() or default_out

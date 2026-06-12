@@ -847,6 +847,12 @@ void loop() {
             gotoScreen(n);
             redraw();
         }
+        if (cmd == 'C' || cmd == 'c') {
+            // Coin picker
+            if (s_backlightOff) { s_backlightOff = false; brightnessRestore(); }
+            gotoCoinPicker();
+            redraw();
+        }
         if (cmd == 'F' || cmd == 'f') {
             // Force refresh
             if (s_wifiOk && !workerBusy()) {
