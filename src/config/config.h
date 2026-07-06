@@ -45,7 +45,7 @@
 #define LED_B 17
 
 // ── LDR (light sensor for auto-brightness) ───────────────────────────────
-#define LDR_PIN 35   // LDR is on GPIO35 on CYD boards
+#define LDR_PIN 35   // LDR is on GPIO35 on CYD boards (GPIO34 = battery voltage divider)
 
 // ── Screen geometry ───────────────────────────────────────────────────────
 #define SCREEN_W   320

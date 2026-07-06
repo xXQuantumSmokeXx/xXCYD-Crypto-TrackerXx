@@ -471,7 +471,7 @@ void cryptoLoadCustomCoins() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────
-#define CRYPTO_CFG_VERSION 1  // bump to force NVS wipe on schema changes
+#define CRYPTO_CFG_VERSION 2  // bump to force NVS wipe on schema changes
 
 void cryptoInit() {
     // ── NVS migration: wipe stale data if config version changed ────────────

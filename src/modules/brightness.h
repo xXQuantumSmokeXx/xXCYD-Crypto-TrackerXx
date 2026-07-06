@@ -8,4 +8,4 @@ int  brightnessGetLevel();      // current level 0-5
 void brightnessAutoUpdate();    // call in loop(); only runs when level==0
 void brightnessRestore();       // re-apply current level (used after invert off)
 void brightnessOff();           // zero PWM (used by sleep timer)
-int  batteryPct();              // 0-100 if LiPo detected on GPIO34, else -1
+int  batteryPct();              // 0-100 if LiPo detected on GPIO34 (100k/100k divider), else -1
