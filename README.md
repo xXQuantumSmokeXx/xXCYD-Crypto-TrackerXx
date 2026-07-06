@@ -1,6 +1,6 @@
 # xXCYD-Crypto-TrackerXx
 
-Real-time cryptocurrency tracker for the ESP32-32E (1-USB) and 2USB CYD (Cheap Yellow Display) — live prices, 24H/7D sparkline charts, Fear & Greed index, multi-page coin layout, and intelligent power management.
+Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D sparkline charts, Fear & Greed index, multi-page coin layout, and intelligent power management.
 
 [![Support on Patreon](https://img.shields.io/badge/Support-Patreon-orange)](https://www.patreon.com/c/xXQuantumSmokeXx)
 
