@@ -1,5 +1,14 @@
 # TODO
 
+## TOP PRIORITY
+
+- [x] **REMOVE THE VERSIONING** (2026-10-25) — done. `APP_VERSION`, the version line at boot,
+      `VERSION:` on the `V` command, the Release workflow and `release-notes/` are gone. `V`
+      now prints `BUILD:<compile date time>`, and the boot line prints the same stamp.
+      Existing tags and the v1.1.12 release were left as history; nothing creates new ones.
+      The v1.1.x churn (six internal builds between two releases, a day lost to release
+      plumbing) is why.
+
 ## NEXT_RELEASE (v1.2.0)
 
 - [ ] **Battery % — what's left** — Layer 1 shipped (alpha, hysteresis, off-draw sampling).

@@ -56,9 +56,8 @@
 #define CONTENT_H  (SCREEN_H - TOPBAR_H - BOTBAR_H - 2)
 
 // ── App settings ─────────────────────────────────────────────────────────
-// Printed at boot and by the V serial command. Bump on every release: after a reflash,
-// "which build is this?" should be answerable without hunting for a commit hash.
-#define APP_VERSION         "v1.1.12"
+// No version numbers (2026-10-25). A build is identified by its commit and the compile
+// date/time, which setup() prints and the V serial command repeats.
 #define MAX_COINS_PER_PAGE  4
 #define MAX_CRYPTO_PAGES    5
 #define COIN_MAX            (MAX_COINS_PER_PAGE * MAX_CRYPTO_PAGES)  // 20 total slots

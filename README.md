@@ -137,7 +137,7 @@ On a board running a launcher with its own partition table (M5Launcher's slots s
 - `M` — cycle display rotation (2USB)
 - `T` — cycle touch rotation (2USB)
 - `R` — ready check
-- `V` — print the firmware version
+- `V` — print the build stamp (compile date and time)
 - `S` — screenshot capture (RGB332)
 
 ## Build
@@ -152,23 +152,8 @@ pio run -e cyd_crypto_2usb
 
 Requires PlatformIO with `espressif32@6.3.0` platform. The only build flag difference between variants is `-DCYD_USB_VERSION=1` vs `-DCYD_USB_VERSION=2`.
 
-## Releasing
-
-Bump `APP_VERSION`, write `release-notes/v<version>.md`, commit, then push a tag:
-
-```bash
-git tag -a v1.1.12 -m "v1.1.12 - …"
-git push --follow-tags
-```
-
-The `Release` workflow builds both boards with the pinned PlatformIO environment and
-publishes the release with both `.bin` files and a `SHA256SUMS.txt`, using the repository's
-own `GITHUB_TOKEN`. No personal token, no `gh` login — the tag push is the whole release.
-Notes are read from `release-notes/<tag>.md` on the default branch, so a tag never has to
-move to add them; a new tag can also be published from the Actions tab with *Run workflow*.
-
-One-time repository setting: **Settings → Actions → General → Workflow permissions →
-Read and write permissions**, or the release step cannot create the release.
+There are no releases or version numbers (removed 2026-10-25). A build is identified by its
+commit and the compile date/time printed at boot; `V` prints the same stamp.
 
 ## Project Structure
 
@@ -205,6 +190,9 @@ sd_card/
 ```
 
 ## Changelog
+
+> Versioning was removed on 2026-10-25. The entries below are historical; changes after that
+> date are recorded by date, not by version number.
 
 ### v1.1.12
 - **Fixed:** the SD card only worked before the touchscreen was initialised. SD and touch

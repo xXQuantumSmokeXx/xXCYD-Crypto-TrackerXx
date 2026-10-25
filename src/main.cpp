@@ -586,7 +586,7 @@ static void touchCalibrate() {
 // ─────────────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
-    Serial.printf("CYD-Crypto-Tracker %s\n", APP_VERSION);
+    Serial.printf("CYD-Crypto-Tracker build %s %s\n", __DATE__, __TIME__);
 
     pinMode(LED_R, OUTPUT); pinMode(LED_G, OUTPUT); pinMode(LED_B, OUTPUT);
     ledSet(false, false, false);
@@ -915,7 +915,8 @@ void loop() {
             Serial.println("READY");
         }
         if (cmd == 'V' || cmd == 'v') {
-            Serial.printf("VERSION:%s\n", APP_VERSION);
+            // No versions (2026-10-25): the compile stamp is what identifies a build.
+            Serial.printf("BUILD:%s %s\n", __DATE__, __TIME__);
         }
         if (cmd == 'M' || cmd == 'm') {
             int cur = 3;
