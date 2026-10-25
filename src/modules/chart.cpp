@@ -54,6 +54,7 @@ static ChartSlot s_slots[CHART_SLOTS];
 
 static char        s_pendingCoin[32] = "";
 static uint8_t     s_pendingMask = 0;       // bit n = period CHART_1M + n
+static uint8_t     s_inFlight    = 0;       // being fetched right now; do not re-queue
 static uint8_t     s_failedMask  = 0;       // same bits: the last fetch for that slot failed
 static uint32_t    s_coolUntil   = 0;       // ms; back off after a failed fetch
 static ChartWakeFn s_wake = nullptr;
@@ -295,7 +296,7 @@ void chartRequest(const char *coinId, int period) {
             s_pendingMask = 0;
         }
         uint8_t bit = (uint8_t)(1u << (period - CHART_1M));
-        if (s_pendingMask & bit) return;                        // already queued
+        if ((s_pendingMask | s_inFlight) & bit) return;         // queued or in hand
         s_pendingMask |= bit;
         s_failedMask  &= (uint8_t)~bit;                         // a new attempt, new odds
         wake = true;
@@ -318,9 +319,17 @@ bool chartServicePending() {
         while (slot < CHART_SLOTS && !(s_pendingMask & (1u << slot))) slot++;
         if (slot >= CHART_SLOTS) { s_pendingMask = 0; return false; }
         s_pendingMask &= (uint8_t)~(1u << slot);
+        s_inFlight    |= (uint8_t)(1u << slot);
         period = CHART_1M + slot;
         strlcpy(coin, s_pendingCoin, sizeof(coin));
     }
+    struct ClearInFlight {
+        uint8_t bit;
+        ~ClearInFlight() {
+            ChartLock lock;
+            s_inFlight &= (uint8_t)~bit;
+        }
+    } _clear { (uint8_t)(1u << (period - CHART_1M)) };
 
     float points[CHART_POINTS];
     int   count = 0;
@@ -367,7 +376,17 @@ int chartCopyPoints(const char *coinId, int period, float *out, int maxPoints) {
     if (period < CHART_1M || period >= CHART_PERIOD_COUNT) return 0;
     ChartLock lock;
     ChartSlot &sl = s_slots[period - CHART_1M];
-    if (!sl.valid || strcmp(sl.coin, coinId) != 0) return 0;
+    if (!sl.valid || strcmp(sl.coin, coinId) != 0) {
+        // Throttled: says exactly what the UI asked for and what the slot holds, which is
+        // the difference between "not fetched yet" and "fetched for a different coin".
+        static uint32_t lastLog = 0;
+        if (millis() - lastLog > 1000) {
+            lastLog = millis();
+            Serial.printf("chart copy miss: want %s/%d, slot valid=%d holds '%s' (%d pts)\n",
+                          coinId, period, (int)sl.valid, sl.coin, sl.count);
+        }
+        return 0;
+    }
     int n = sl.count < maxPoints ? sl.count : maxPoints;
     memcpy(out, sl.points, (size_t)n * sizeof(float));
     return n;
