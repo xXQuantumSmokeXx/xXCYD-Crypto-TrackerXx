@@ -651,10 +651,11 @@ static bool requestCoins(const char **ids, int count, bool withSparkline) {
 // and on the device that body comes back truncated - every attempt fails with
 // "IncompleteInput" - while the same URL answers in 0.2 s from a PC. The price-only body
 // (~17 KB) parses reliably and is what the minute refresh has always used, so that is the
-// size to stay near: prices in one request, sparklines four coins at a time
-// (2026-10-25). Without the SD cache present the failure was invisible until the card was
-// pulled - the old cache answered instead.
-#define SPARK_BATCH_MAX 4
+// size to stay near: prices in one request, sparklines five coins at a time (~20 KB each).
+// Five, not four (2026-10-25): the anonymous ceiling is ~5 calls/minute, and 19 coins at
+// five per batch is four requests instead of five - the difference between every coin
+// getting a sparkline and the last three always 429ing.
+#define SPARK_BATCH_MAX 5
 
 static bool fetchCoins(bool withSparkline) {
     const char *ids[COIN_MAX];
@@ -675,9 +676,18 @@ static bool fetchCoins(bool withSparkline) {
         }
     }
 
-    // Prices first, always, in one small request: every coin becomes drawable before the
-    // hourly sparkline work starts, so a boot with no cache does not sit on "Loading data...".
-    if (!requestCoins(ids, count, false)) return false;
+    // Prices first, always, in one small request - except when every coin already has one and
+    // the sparkline batches are about to carry fresh prices anyway. That check is what keeps
+    // a sparkline refresh to four calls: with the anonymous ceiling around five a minute, one
+    // saved request is the difference between 4/5 and 5/5 batches (2026-10-25).
+    bool needPrices = !withSparkline;
+    if (!needPrices) {
+        DataLock lock;
+        for (int i = 0; i < count; i++) {
+            if (!s_coinCache[i].valid) { needPrices = true; break; }
+        }
+    }
+    if (needPrices && !requestCoins(ids, count, false)) return false;
 
     if (withSparkline) {
         int ok = 0, batches = 0;
