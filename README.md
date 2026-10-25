@@ -188,6 +188,24 @@ sd_card/
 
 ## Changelog
 
+### v1.1.12
+- **Fixed:** the SD card only worked before the touchscreen was initialised. SD and touch
+  share VSPI on *different* pins, and `SPIClass::begin()` does nothing once the bus has been
+  started — so after `touchInit()` re-muxed the bus, every later `SD.begin()` kept talking to
+  the touch pins and failed. The price cache, the chart cache and `/batt.csv` never reached
+  the card; only the boot reads (wifi.txt, apikey.txt, pages.txt), which happen before touch
+  init, worked. Both now share one `SPIClass` that ends and re-attaches its pins per device.
+- **Changed:** the boot splash no longer claims "WiFi failed!". It waits 20 s instead of 12,
+  and if the association is slow it says "WiFi not up yet - retrying..." — the loop keeps
+  trying and usually gets there seconds later.
+
+### v1.1.11
+- **Changed:** sparkline batches cover five coins instead of four, and the standalone price
+  request is skipped when every coin already has one (the batches carry current prices
+  anyway). A 19-coin sparkline refresh is now four calls instead of six, which fits under the
+  anonymous ~5/min ceiling — so every coin gets a sparkline, including the last batch that
+  used to 429.
+
 ### v1.1.10
 - **Diagnostics:** the SD price cache no longer fails silently. Mount, mkdir, open and write
   failures print to serial, along with `cache: created /cache/btc.bin (…)` the first time the

@@ -23,11 +23,13 @@
       the last batch (AAVE, HBAR, COQ) 429s every time. De-chunk and parse the stream the way
       `chart.cpp` already does for 1M/3M: one request, flat memory, no rate-limit edge. This is
       the proper fix; an `apikey.txt` CoinGecko demo key is the stopgap.
-- [ ] **SD cache is never written to the card** (found 2026-10-25) — after a session that
-      fetched successfully and drew live data with the card inserted, `/cache/btc.bin` was
-      still absent. `saveCacheToSD()` had been failing silently (no log at all). v1.1.10 logs
-      mount/mkdir/open/write failures and the first successful creation; needs a device run to
-      see which step fails. Until this works, every offline boot starts from nothing.
+- [x] **SD cache is never written to the card** (found and fixed 2026-10-25) — after a
+      session that fetched successfully and drew live data with the card inserted,
+      `/cache/btc.bin` was still absent. Yes: **every SD mount after `touchInit()` failed**.
+      SD and touch share VSPI on different pins and `SPIClass::begin()` no-ops once started,
+      so the SD library's own `spi.begin()` left the card talking to the touch pins. Fixed by
+      giving both one shared `SPIClass` that `end()`s and re-begins with its own pins. See
+      "Shared VSPI bus" under Landed.
 - [x] **Multi-Period Charts — 24H / 7D / 1M / 3M** (2026-10-25) — see "Landed".
 - [x] **Charts — 3M is the longest period** (decided 2026-10-25). 6M, 1Y and ALL are not
       planned; 3M covers what the Commander wants and the tabs stay at four. For the record
@@ -41,10 +43,16 @@
 ## Landed (2026-10-25)
 
 **Shared VSPI bus** — `src/config/spi_bus.h`. The SD card and the touch controller are both
-on VSPI, and `SD.begin()` re-muxes the bus to the SD pins; the touch driver's `SPIClass`
-has no way to know, so a touch read during an SD session returns garbage. One mutex now
-covers every SD session and every touch read, and because `SD.end()` leaves the bus on the
-SD pins, each session re-inits touch on the way out (`SdSession` → `spiBusRestore()`).
+on VSPI but on different pins (card 18/19/23, touch 25/39/32), and `SPIClass::begin()` returns
+early once the bus is started — the instance that began it last owns the pin mux. One mutex
+covers every SD session and every touch read. **Corrected 2026-10-25:** the earlier note here
+claimed `SD.begin()` re-muxes the bus to the SD pins. It does not — its `spi.begin()` is a
+no-op after the first session, so once `touchInit()` had begun VSPI on the touch pins, every
+later mount failed and `saveCacheToSD()` returned false with no log. Both sides now share one
+`SPIClass` (`g_vspiBus`), and each session does `end()` (detach the pins it attached last)
+then `begin(<its own pins>)`. Until this was fixed, the price cache, the per-coin chart cache
+and `/batt.csv` never reached the card; only reads before touch init (wifi.txt, apikey.txt,
+pages.txt) worked.
 
 **Cache is binary** — 776-byte `CoinData` records instead of raw JSON. ~79 KB of JSON per
 fetch (measured against the live API) becomes 15.5 KB; reading it back needs no parser and
@@ -141,12 +149,15 @@ cache. `loop()` now checks the link every 10 s, calls `WiFi.reconnect()` every 3
 down, starts SNTP the first time it comes up, and forces a fetch on the transition. Untested
 on hardware as of this writing.
 
-**Anonymous CoinGecko quota** — the boot/refresh burst is one price request plus five
-sparkline batches. The public limit is around 5 calls/minute, so the last batch was the one
-getting 429 (`sparkline batch 5 failed (ids 16-18)` — AAVE, HBAR, COQ, whose rows then draw
-no sparkline because `drawSpark` needs two points). Confirmed on the 2-USB at v1.1.9: page 1
-live, 4/5 batches. A CoinGecko demo key (`CG-…`, single line in `apikey.txt`) raises the limit
-to ~30/min and is the stopgap until the streaming rewrite in NEXT_RELEASE.
+**Anonymous CoinGecko quota** — the boot/refresh burst was one price request plus five
+sparkline batches, and the public limit is around 5 calls/minute: the last batch always got
+429 (`sparkline batch 5 failed (ids 16-18)` — AAVE, HBAR, COQ, whose rows then draw no
+sparkline because `drawSpark` needs two points). Confirmed on the 2-USB at v1.1.9: page 1
+live, 4/5 batches. v1.1.11 batches five coins at a time and skips the redundant price request
+when every coin is already valid, so 19 coins cost four calls. The batch ceiling (~20 KB) is
+untested on hardware; the streaming rewrite below removes the limit entirely. A CoinGecko demo
+key (`CG-…`, single line in `apikey.txt`) remains the simplest way to raise the ceiling to
+~30/min.
 
 **A key for the wrong service** — 2026-10-25: `apikey.txt` held a 36-byte UUID, i.e. a
 LiveCoinWatch key (the user's paste of `{currency, sort, order, offset, limit, meta}` is that
