@@ -26,6 +26,10 @@ corrupt old files. The old `/cache/btc.json` is ignored, not migrated.
 (CoinGecko sends 28). Parse failures now return false so the cache is used, and an empty
 result is never written over a good cache.
 
+**Page layout from SD** — `/pages.txt` (`P1: BTC, AVAX, SUI, ZEC`), so the layout can be set
+without the picker, the way `wifi.txt` and `apikey.txt` already work. Applied when the file's
+hash changes: picker edits survive a reboot, editing the file re-applies on the next boot.
+
 **Finding for the chart work** — CoinGecko answers `Transfer-Encoding: chunked` with no
 `Content-Length`, and only `HTTPClient`'s own body readers strip the chunk framing.
 `http.getStream()` hands back the raw socket, so a stream parser would be fed chunk-size

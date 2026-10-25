@@ -203,6 +203,140 @@ static void cryptoPagesLoad() {
     }
 }
 
+// ── Page layout from SD ───────────────────────────────────────────────────
+// Set the whole layout without touching the picker, the same way wifi.txt and apikey.txt
+// work. /pages.txt, one page per line, coins comma-separated, any order:
+//
+//     P1: BTC, AVAX, SUI, ZEC
+//     P2: ICP, STRK, JUP, ADA
+//
+// A token is a CoinGecko id or a symbol, case-insensitive, from the built-in 50 or from
+// custom_coins.txt. The file is authoritative for the layout WHEN IT CHANGES: its hash is
+// kept in NVS, so edits made in the picker survive a reboot, and editing the file re-applies
+// it on the next boot. Pages not mentioned are cleared and disabled - list them if you want
+// to keep them. Unknown coins and over-full pages are logged and skipped rather than
+// silently dropped, and a file with nothing usable in it changes nothing.
+#define PAGES_FILE "/pages.txt"
+
+static uint32_t fnv1a(const char *data, size_t len) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; i++) {
+        h ^= (uint8_t)data[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static int findCoinIndex(const String &token) {
+    for (int i = 0; i < TOP50_COUNT; i++) {
+        if (token.equalsIgnoreCase(g_top50[i].id) ||
+            token.equalsIgnoreCase(g_top50[i].symbol))
+            return i;
+    }
+    for (int i = 0; i < g_customCoinCount; i++) {
+        if (token.equalsIgnoreCase(g_customCoins[i].id) ||
+            token.equalsIgnoreCase(g_customCoins[i].symbol))
+            return TOP50_COUNT + i;
+    }
+    return -1;
+}
+
+static void cryptoApplyPageConfigFromSD() {
+    String text;
+    {
+        SdSession sd;
+        if (!sd.ok()) return;
+        if (!SD.exists(PAGES_FILE)) return;
+        File f = SD.open(PAGES_FILE, FILE_READ);
+        if (!f) return;
+        while (f.available()) text += (char)f.read();
+        f.close();
+    }
+    if (text.length() == 0) return;
+
+    uint32_t hash = fnv1a(text.c_str(), text.length());
+    if ((uint32_t)nvsGetInt("pgcfg_hash", 0) == hash) return;   // already applied
+
+    int8_t layout[MAX_CRYPTO_PAGES][MAX_COINS_PER_PAGE];
+    int    count[MAX_CRYPTO_PAGES] = {};
+    for (int p = 0; p < MAX_CRYPTO_PAGES; p++)
+        for (int s = 0; s < MAX_COINS_PER_PAGE; s++)
+            layout[p][s] = -1;
+
+    int applied = 0, skipped = 0, lineNo = 0, pos = 0;
+    while (pos < (int)text.length()) {
+        int nl = text.indexOf('\n', pos);
+        if (nl < 0) nl = text.length();
+        String line = text.substring(pos, nl);
+        pos = nl + 1;
+        lineNo++;
+        line.trim();
+        if (line.length() == 0 || line.startsWith("#")) continue;
+
+        int colon = line.indexOf(':');
+        if (colon <= 1 || (line[0] != 'P' && line[0] != 'p')) {
+            Serial.printf("pages.txt:%d: expected 'P<n>: COIN, COIN' - skipped\n", lineNo);
+            skipped++;
+            continue;
+        }
+        int pageNo = line.substring(1, colon).toInt();
+        if (pageNo < 1 || pageNo > MAX_CRYPTO_PAGES) {
+            Serial.printf("pages.txt:%d: page %d out of range 1-%d - skipped\n",
+                          lineNo, pageNo, MAX_CRYPTO_PAGES);
+            skipped++;
+            continue;
+        }
+        int page = pageNo - 1;
+
+        String rest = line.substring(colon + 1);
+        for (int s = 0; s <= (int)rest.length(); ) {
+            int comma = rest.indexOf(',', s);
+            if (comma < 0) comma = rest.length();
+            String token = rest.substring(s, comma);
+            token.trim();
+            s = comma + 1;
+            if (token.length() == 0) continue;
+
+            int idx = findCoinIndex(token);
+            if (idx < 0) {
+                Serial.printf("pages.txt:%d: unknown coin '%s' - skipped\n",
+                              lineNo, token.c_str());
+                skipped++;
+                continue;
+            }
+            bool dup = false;
+            for (int k = 0; k < count[page]; k++)
+                if (layout[page][k] == idx) dup = true;
+            if (dup) continue;
+            if (count[page] >= MAX_COINS_PER_PAGE) {
+                Serial.printf("pages.txt:%d: page %d is full (%d) - '%s' skipped\n",
+                              lineNo, pageNo, MAX_COINS_PER_PAGE, token.c_str());
+                skipped++;
+                continue;
+            }
+            layout[page][count[page]++] = (int8_t)idx;
+            applied++;
+        }
+    }
+
+    if (applied == 0) {
+        Serial.println("pages.txt: nothing usable - page layout left as it was");
+        return;
+    }
+
+    // Authoritative: clear every page, then write exactly what the file asked for.
+    for (int p = 0; p < MAX_CRYPTO_PAGES; p++) {
+        cryptoPageClear(p);
+        for (int s = 0; s < MAX_COINS_PER_PAGE; s++)
+            cryptoPageSetCoin(p, s, layout[p][s]);
+        cryptoPageSetEnabled(p, count[p] > 0);
+    }
+    nvsPutInt("pgcfg_hash", (int32_t)hash);
+
+    Serial.printf("pages.txt: applied %d coin(s) to %d page(s), %d skipped\n",
+                  applied, cryptoGetEnabledPageCount(), skipped);
+}
+
 // ── Collect all unique coin IDs from active pages ─────────────────────────
 static int cryptoCollectActiveIds(const char **idsOut, int maxIds) {
     bool seen[TOP50_COUNT + CUSTOM_COINS_MAX] = {};
@@ -587,7 +721,8 @@ void cryptoInit() {
             }
         }
     }
-    cryptoLoadCustomCoins();  // reads /custom_coins.txt from SD
-    cryptoPagesLoad();
+    cryptoLoadCustomCoins();        // reads /custom_coins.txt from SD
+    cryptoPagesLoad();              // NVS layout
+    cryptoApplyPageConfigFromSD();  // /pages.txt overrides it, when the file has changed
     // Don't fetch here — caller decides when (after WiFi connects)
 }

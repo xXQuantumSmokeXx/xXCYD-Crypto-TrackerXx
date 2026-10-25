@@ -36,6 +36,7 @@ Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D sparkli
 **Coin Picker:**
 - 50 built-in coins (see list below)
 - Custom coin support via `custom_coins.txt` on SD card — add any CoinGecko-listed token
+- Page layout via `pages.txt` on SD card — pin coins to pages without the picker
 - Page management: enable/disable pages, clear pages, move coins between pages
 - Visual indicators for coins assigned to other pages
 - Gapless page tabs for easy touch navigation
@@ -76,6 +77,22 @@ fetch-ai,FET
 
 Up to 10 custom coins. Appear below the 50 built-in coins in the Coin Picker. [Find CoinGecko IDs](https://www.coingecko.com/en/coins/list).
 
+## Page Layout from SD
+
+Drop `pages.txt` on the SD card root to set the pages and their coins without using the
+picker. Five pages, four coins each; a token is a CoinGecko ID or a symbol, case-insensitive:
+
+```
+# P<n>: coin, coin, coin, coin
+P1: BTC, AVAX, SUI, ZEC
+P2: ICP, STRK, JUP, ADA
+```
+
+Pages you don't list are cleared and disabled. The file is authoritative **when its
+contents change** — the hash is kept in NVS, so layout edits made in the picker survive a
+reboot, and editing the file re-applies it on the next boot. Unknown coins and over-full
+pages are reported on serial and skipped; a file with nothing usable in it changes nothing.
+
 ## Setup
 
 | Board | Firmware File |
@@ -94,8 +111,9 @@ esptool.py --chip esp32 write_flash 0x0 CYD-Crypto-Tracker-2usb.bin
 **SD card files (place on root):**
 - `wifi.txt` — WiFi credentials: line 1 = SSID, line 2 = password
 - `custom_coins.txt` — optional custom CoinGecko IDs (one per line)
+- `pages.txt` — optional page layout (see above)
 - `apikey.txt` — optional CoinGecko API key (single line, avoids anonymous rate limits)
-- `cache/btc.json` — auto-generated price cache
+- `cache/btc.bin` — auto-generated price cache (binary; older `btc.json` is ignored)
 
 ## Serial Commands
 
