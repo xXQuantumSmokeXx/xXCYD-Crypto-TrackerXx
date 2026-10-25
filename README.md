@@ -173,7 +173,7 @@ sd_card/
 
 ## Changelog
 
-### v1.1.3 (unreleased)
+### v1.1.3
 - **Fixed:** the UI could draw a coin while the fetch worker was rewriting it on the other
   core — a torn price or a half-copied name. Reads now copy the coin under a lock.
 - **Fixed:** a custom coin assigned to a page was looked up with an out-of-bounds index
