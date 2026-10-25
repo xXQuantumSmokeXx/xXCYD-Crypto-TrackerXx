@@ -48,6 +48,13 @@ fixed in the same pass as the lock because it is the same three lines.
 ~4 s, `pages.txt` applied, and the battery gauge held at 4% without flicker — the hysteresis
 change confirmed, though a full charge/discharge cycle is still needed to judge the EMA.
 
+v1.1.5 on a 2-USB CYD: page 3 with a single ETH works through all four chart periods
+(24H/7D/1M/3M) on tap, and a tap on a multi-coin page opens that coin's detail chart. Two
+findings from the serial capture that are worth remembering: a 3M fetch only starts after 1M
+finishes on the worker, so anything that resets the device in that window leaves 3M
+unloaded (the SD cache makes the next attempt instant); and the app's partition slot
+(`cydcry`, 1,088 KB) is 5% free against a 1,058 KB binary.
+
 Not yet exercised on hardware: the offline cache (WiFi off, >5 min, reboot), `F` with no
 network, and a custom coin on a page.
 
