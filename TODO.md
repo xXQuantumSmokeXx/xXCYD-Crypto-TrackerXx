@@ -60,8 +60,11 @@ finishes on the worker, so anything that resets the device in that window leaves
 unloaded (the SD cache makes the next attempt instant); and the app's partition slot
 (`cydcry`, 1,088 KB) is 5% free against a 1,058 KB binary.
 
+v1.1.6 (unreleased) adds `/batt.csv`; that build is on the 1-USB card waiting for a
+discharge capture.
+
 Not yet exercised on hardware: the offline cache (WiFi off, >5 min, reboot), `F` with no
-network, and a custom coin on a page.
+network, a custom coin on a page, and the battery log itself.
 
 **Offline cache actually works** — it did not. `cryptoFetch(force)` zeroed `btc_cached_at`
 before trying the network, so a failed forced fetch (startup's retries, the `F` key)
