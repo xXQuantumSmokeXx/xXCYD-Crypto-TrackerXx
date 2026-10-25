@@ -9,9 +9,12 @@
 - [x] **Sparkline split** (2026-10-25) — prices every minute (17,035 bytes for 20 coins),
       sparklines hourly (80,831). See "Landed".
 - [x] **Multi-Period Charts — 24H / 7D / 1M / 3M** (2026-10-25) — see "Landed".
-- [ ] **Charts — 6M / 1Y / ALL.** 6M (180 points) and 1Y (365) fit the existing raw buffer
-      as-is. ALL is 5000+ points for BTC, which needs either a ~24 KB buffer or downsampling
-      while parsing; decide which before adding the tabs.
+- [x] **Charts — 3M is the longest period** (decided 2026-10-25). 6M, 1Y and ALL are not
+      planned; 3M covers what the Commander wants and the tabs stay at four. For the record
+      if that ever changes: ALL is 5000+ points for BTC and would need a ~24 KB buffer or
+      decimation while parsing, and on 2026-10-25 the demo API returned 401 for `days=180`
+      and `days=730` while `30` and `365` worked — probably quota, but worth re-checking
+      before assuming a range is available.
 - [x] **Shared VSPI bus mutex + heap-light cache** (2026-10-25) — see "Landed" below
 - [ ] **TBD**
 
