@@ -30,6 +30,11 @@ void chartInit();
 // UI side. Never blocks and never touches the network; safe to call from a draw.
 void chartRequest(const char *coinId, int period);
 
+// Ask for both fetched periods at once, so the first tap on 1M/3M finds the data already
+// there instead of starting a download. Deduplicated like chartRequest, so calling it from
+// a draw is harmless; the cost is one 30-day and one 90-day fetch per cache lifetime.
+void chartPrefetch(const char *coinId);
+
 // Fetch-worker side. Returns true if it serviced a request (so callers can redraw).
 bool chartServicePending();
 

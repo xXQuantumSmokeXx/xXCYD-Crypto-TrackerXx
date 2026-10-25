@@ -73,7 +73,9 @@ static void fetchWorker(void *param) {
 
         // A chart the user is looking at beats a scheduled price refresh, and it is
         // serviced HERE so that no HTTP ever runs on the UI core.
-        if (chartServicePending()) {
+        bool chartWork = false;
+        while (chartServicePending()) chartWork = true;   // drain both periods' requests
+        if (chartWork) {
             ledSet(false, false, false);
             continue;
         }

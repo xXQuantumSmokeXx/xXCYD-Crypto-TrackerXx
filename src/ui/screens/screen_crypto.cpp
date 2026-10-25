@@ -159,6 +159,10 @@ static void drawOneCoin(TFT_eSPI &tft, int contentY, int contentH, const CoinDat
     }
 
     // ── Inline graph — cycles 24H / 7D / 1M / 3M on tap ───────────────────
+    // Prefetch both long periods while the page is on screen, so the first tap on 1M/3M
+    // shows a chart rather than "Loading chart...". Deduplicated, so redraws are free.
+    chartPrefetch(c.id);
+
     int sparkY = hlY + 42;
     int sparkH = contentY + contentH - sparkY - 4;
     int sparkW = SCREEN_W - 8;

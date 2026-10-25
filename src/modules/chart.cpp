@@ -7,6 +7,7 @@
 #include <HTTPClient.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <Arduino.h>
 #include <cstring>
 #include <cstdlib>
 
@@ -38,15 +39,24 @@ struct ChartLock {
 };
 
 static float s_raw[CHART_RAW_MAX];       // worker-only scratch
-static float s_points[CHART_POINTS];     // the loaded period, downsampled
-static int   s_pointCount  = 0;
-static char  s_loadedCoin[32] = "";
-static int   s_loadedPeriod = -1;
 
-static char      s_pendingCoin[32] = "";
-static int8_t    s_pendingPeriod   = -1;
+// One slot per fetched period, so 1M and 3M can both be resident and switching between
+// them is instant. A single slot meant every swap re-fetched - and asking for 3M while 1M
+// was loading cancelled it (2026-10-25).
+#define CHART_SLOTS (CHART_PERIOD_COUNT - CHART_1M)
+struct ChartSlot {
+    float points[CHART_POINTS];
+    int   count = 0;
+    char  coin[32] = "";
+    bool  valid = false;
+};
+static ChartSlot s_slots[CHART_SLOTS];
+
+static char        s_pendingCoin[32] = "";
+static uint8_t     s_pendingMask = 0;       // bit n = period CHART_1M + n
+static uint32_t    s_coolUntil   = 0;       // ms; back off after a failed fetch
 static ChartWakeFn s_wake = nullptr;
-static volatile bool s_updated = false;   // set on publish, consumed by the UI loop
+static volatile bool s_updated = false;     // set on publish, consumed by the UI loop
 
 // ── Small helpers ─────────────────────────────────────────────────────────
 const char *chartPeriodLabel(int p) {
@@ -270,41 +280,60 @@ void chartRequest(const char *coinId, int period) {
     bool wake = false;
     {
         ChartLock lock;
-        if (s_pointCount > 0 && s_loadedPeriod == period &&
-            strcmp(s_loadedCoin, coinId) == 0) return;          // already showing it
-        if (s_pendingPeriod == period && strcmp(s_pendingCoin, coinId) == 0) return;
-        strlcpy(s_pendingCoin, coinId, sizeof(s_pendingCoin));
-        s_pendingPeriod = (int8_t)period;
+        if (millis() < s_coolUntil) return;                     // a fetch just failed
+        ChartSlot &sl = s_slots[period - CHART_1M];
+        if (sl.valid && strcmp(sl.coin, coinId) == 0) return;   // already resident
+
+        // A different coin retires anything still queued for the old one.
+        if (strcmp(s_pendingCoin, coinId) != 0) {
+            strlcpy(s_pendingCoin, coinId, sizeof(s_pendingCoin));
+            s_pendingMask = 0;
+        }
+        uint8_t bit = (uint8_t)(1u << (period - CHART_1M));
+        if (s_pendingMask & bit) return;                        // already queued
+        s_pendingMask |= bit;
         wake = true;
     }
     if (wake && s_wake) s_wake();
 }
 
+void chartPrefetch(const char *coinId) {
+    chartRequest(coinId, CHART_1M);
+    chartRequest(coinId, CHART_3M);
+}
+
 bool chartServicePending() {
-    char coin[32];
-    int  period;
+    char coin[32] = "";
+    int  period = -1;
     {
         ChartLock lock;
-        if (s_pendingPeriod < 0) return false;
+        if (!s_pendingMask) return false;
+        int slot = 0;
+        while (slot < CHART_SLOTS && !(s_pendingMask & (1u << slot))) slot++;
+        if (slot >= CHART_SLOTS) { s_pendingMask = 0; return false; }
+        s_pendingMask &= (uint8_t)~(1u << slot);
+        period = CHART_1M + slot;
         strlcpy(coin, s_pendingCoin, sizeof(coin));
-        period = s_pendingPeriod;
-        s_pendingPeriod = -1;
     }
 
     float points[CHART_POINTS];
     int   count = 0;
 
     if (!loadCache(coin, period, points, count)) {
-        if (!fetchChart(coin, period, points, count)) return false;
+        if (!fetchChart(coin, period, points, count)) {
+            s_coolUntil = millis() + 60000;   // do not hammer a failing endpoint
+            return true;                      // the request was still consumed
+        }
         saveCache(coin, period, points, count);
     }
 
     {
         ChartLock lock;
-        memcpy(s_points, points, sizeof(float) * (size_t)count);
-        s_pointCount = count;
-        strlcpy(s_loadedCoin, coin, sizeof(s_loadedCoin));
-        s_loadedPeriod = period;
+        ChartSlot &sl = s_slots[period - CHART_1M];
+        memcpy(sl.points, points, sizeof(float) * (size_t)count);
+        sl.count = count;
+        strlcpy(sl.coin, coin, sizeof(sl.coin));
+        sl.valid = true;
     }
     s_updated = true;
     return true;
@@ -318,10 +347,11 @@ bool chartConsumeUpdated() {
 
 int chartCopyPoints(const char *coinId, int period, float *out, int maxPoints) {
     if (!coinId || !out || maxPoints <= 0) return 0;
+    if (period < CHART_1M || period >= CHART_PERIOD_COUNT) return 0;
     ChartLock lock;
-    if (s_pointCount == 0 || s_loadedPeriod != period) return 0;
-    if (strcmp(s_loadedCoin, coinId) != 0) return 0;
-    int n = s_pointCount < maxPoints ? s_pointCount : maxPoints;
-    memcpy(out, s_points, (size_t)n * sizeof(float));
+    ChartSlot &sl = s_slots[period - CHART_1M];
+    if (!sl.valid || strcmp(sl.coin, coinId) != 0) return 0;
+    int n = sl.count < maxPoints ? sl.count : maxPoints;
+    memcpy(out, sl.points, (size_t)n * sizeof(float));
     return n;
 }

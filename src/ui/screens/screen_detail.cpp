@@ -111,6 +111,10 @@ void screenDetailDraw(TFT_eSPI &tft, bool wifiOk, const char *coinId) {
     snprintf(title, sizeof(title), "%s", c->symbol);
     drawTopbar(tft, "< BACK", title, timeStr, wifiOk);
 
+    // Have 1M and 3M already loading before a finger reaches the tabs, so the first tap
+    // finds the data instead of starting a download. Deduplicated: a no-op once loaded.
+    chartPrefetch(coinId);
+
     int cy = CONTENT_Y;
     tft.fillRect(0, cy, SCREEN_W, CONTENT_H, COL_BG);
 
