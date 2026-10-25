@@ -173,6 +173,16 @@ sd_card/
 
 ## Changelog
 
+### v1.1.5 (unreleased)
+- **New:** multi-period charts on the detail screen — 24H, 7D, 1M and 3M. 1M/3M come from
+  `/coins/{id}/market_chart`, fetched on the worker and cached per coin+period on the SD card
+  (1 hour for 1M, 6 hours for 3M).
+- **Fixed:** the 24H and 7D tabs were swapped — "24H" drew the whole 7-day series and "7D"
+  drew the last 24 points.
+- **Note:** the 1M and 3M responses are 74 KB and 223 KB, so they are parsed as a stream and
+  never held in memory. HTTP/1.0 is used deliberately: CoinGecko only chunk-encodes HTTP/1.1
+  replies, and `getStream()` returns the raw socket.
+
 ### v1.1.4
 - **Changed:** sparklines are fetched hourly instead of every minute. A 20-coin refresh drops
   from ~81 KB to ~17 KB (measured); prices still update every 60 s and the existing chart

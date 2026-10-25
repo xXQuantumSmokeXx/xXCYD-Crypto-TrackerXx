@@ -19,6 +19,7 @@
 #include "touch/touch.h"
 #include "modules/time_sync.h"
 #include "modules/crypto.h"
+#include "modules/chart.h"
 #include "ui/screens/screen_crypto.h"
 #include "ui/screens/screen_detail.h"
 #include "ui/screens/screen_settings.h"
@@ -69,6 +70,14 @@ static void fetchWorker(void *param) {
     (void)param;
     while (true) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+
+        // A chart the user is looking at beats a scheduled price refresh, and it is
+        // serviced HERE so that no HTTP ever runs on the UI core.
+        if (chartServicePending()) {
+            ledSet(false, false, false);
+            continue;
+        }
+
         FetchCmd cmd = s_fetchCmd;
 
         switch (cmd) {
@@ -96,6 +105,12 @@ static void triggerFetch() {
     s_fetchCmd  = FETCH_CRYPTO;
     ledSet(false, false, true);
     xTaskNotifyGive(s_fetchTask);
+}
+
+// Chart requests ride the same worker but not the command enum: a chart must never clobber
+// a pending price refresh, and the worker services chart work first anyway (2026-10-25).
+static void triggerChartFetch() {
+    if (s_fetchTask) xTaskNotifyGive(s_fetchTask);
 }
 
 // ── Splash art — abstract faceted crypto core ───────────────────────────
@@ -573,6 +588,7 @@ void setup() {
     wifiConfigLoad();   // reads wifi.txt from SD if present, saves to NVS
     themeColorInit();
     cryptoInit();       // loads page assignments from NVS
+    chartInit();        // cross-core lock for the multi-period chart buffer
 
     tft.init();
     applyRotation();
@@ -620,6 +636,7 @@ void setup() {
 
     // Launch async fetch worker on Core 0
     xTaskCreatePinnedToCore(fetchWorker, "fetch", 20480, nullptr, 1, &s_fetchTask, 0);
+    chartSetWakeHook(triggerChartFetch);   // the UI's chart requests wake this worker
 
     ledSet(false, false, false);
     s_lastTouchMs = millis();
@@ -659,6 +676,9 @@ void loop() {
         xSemaphoreGive(s_dataMutex);
         if (s_screen < SCR_COUNT) s_needsRedraw = true;
     }
+
+    // A chart finished loading on the worker - draw it
+    if (chartConsumeUpdated() && s_screen < SCR_COUNT) s_needsRedraw = true;
 
     // Clock tick — update time in topbar without full redraw
     if (millis() - s_lastMinute > 60000) {

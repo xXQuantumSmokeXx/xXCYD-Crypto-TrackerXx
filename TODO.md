@@ -8,10 +8,10 @@
       that low or their divider constant differs — compare a resting cell against a meter.
 - [x] **Sparkline split** (2026-10-25) — prices every minute (17,035 bytes for 20 coins),
       sparklines hourly (80,831). See "Landed".
-- [ ] **Multi-Period Charts — re-attempt** — both blockers from July are now gone (shared
-      VSPI mutex, heap-light cache), so this is a fetch + UI job again rather than a
-      stability problem. The bus mutex has since passed a device check, so the stability
-      question is closed.
+- [x] **Multi-Period Charts — 24H / 7D / 1M / 3M** (2026-10-25) — see "Landed".
+- [ ] **Charts — 6M / 1Y / ALL.** 6M (180 points) and 1Y (365) fit the existing raw buffer
+      as-is. ALL is 5000+ points for BTC, which needs either a ~24 KB buffer or downsampling
+      while parsing; decide which before adding the tabs.
 - [x] **Shared VSPI bus mutex + heap-light cache** (2026-10-25) — see "Landed" below
 - [ ] **TBD**
 
@@ -62,6 +62,18 @@ attempts to two, so a dead network costs a shorter splash.
 **Page layout from SD** — `/pages.txt` (`P1: BTC, AVAX, SUI, ZEC`), so the layout can be set
 without the picker, the way `wifi.txt` and `apikey.txt` already work. Applied when the file's
 hash changes: picker edits survive a reboot, editing the file re-applies on the next boot.
+
+**Multi-period charts (24H/7D/1M/3M)** — `src/modules/chart.*`. 24H/7D stay on the cached
+7d sparkline; 1M (30 days) and 3M (90) come from `/coins/{id}/market_chart`, handled on the
+fetch worker so no HTTP ever runs on the UI core (that was July's watchdog reboot). The
+responses are 74 KB and 223 KB, so the body is parsed as a stream and never held: HTTP/1.0
+avoids chunked framing on `getStream()`, and a small state machine pulls the prices out of
+the `"prices"` array as it arrives, downsampling to 168 points. Cached per coin+period as
+binary on SD (1 h / 6 h). The parser was checked against the live API at 1, 30 and 90 days
+and returned exactly the same values as a reference JSON parse.
+
+Fixed in passing: the 24H and 7D tabs were swapped — "24H" drew the full 7-day series and
+"7D" drew the last 24 points.
 
 **Sparklines split from prices** — a `/coins/markets` call with `sparkline=true` is 80,831
 bytes for 20 coins against 17,035 without (79% sparkline, measured). Sparklines are hourly

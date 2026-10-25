@@ -1,0 +1,327 @@
+#include "chart.h"
+#include "../config/config.h"
+#include "../config/spi_bus.h"
+#include "crypto.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <cstring>
+#include <cstdlib>
+
+// ── Sizes ─────────────────────────────────────────────────────────────────
+// Display resolution matches the sparkline; the raw buffer holds a whole 3M response
+// (90 days hourly = 2160) so the downsample can stride over all of it.
+#define CHART_POINTS    168
+#define CHART_RAW_MAX   2300
+#define CHART_MAGIC     0x31545243u   // "CRT1"
+#define CHART_VERSION   1
+
+struct ChartCacheHeader {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t period;
+    uint32_t count;
+    uint32_t fetchedAt;
+};
+
+// ── State ─────────────────────────────────────────────────────────────────
+// Written by the fetch worker (core 0), read by the UI (core 1) - same arrangement as the
+// coin cache, so the same rule: copy under the lock, never hand out a pointer.
+static SemaphoreHandle_t s_lock = nullptr;
+struct ChartLock {
+    ChartLock()  { if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY); }
+    ~ChartLock() { if (s_lock) xSemaphoreGive(s_lock); }
+    ChartLock(const ChartLock &) = delete;
+    ChartLock &operator=(const ChartLock &) = delete;
+};
+
+static float s_raw[CHART_RAW_MAX];       // worker-only scratch
+static float s_points[CHART_POINTS];     // the loaded period, downsampled
+static int   s_pointCount  = 0;
+static char  s_loadedCoin[32] = "";
+static int   s_loadedPeriod = -1;
+
+static char      s_pendingCoin[32] = "";
+static int8_t    s_pendingPeriod   = -1;
+static ChartWakeFn s_wake = nullptr;
+static volatile bool s_updated = false;   // set on publish, consumed by the UI loop
+
+// ── Small helpers ─────────────────────────────────────────────────────────
+const char *chartPeriodLabel(int p) {
+    switch (p) {
+        case CHART_24H: return "24H";
+        case CHART_7D:  return "7D";
+        case CHART_1M:  return "1M";
+        case CHART_3M:  return "3M";
+    }
+    return "?";
+}
+
+int chartPeriodDays(int p) {
+    if (p == CHART_1M) return 30;
+    if (p == CHART_3M) return 90;
+    return 0;   // 24H / 7D come from the sparkline
+}
+
+static uint32_t chartTtlSec(int period) {
+    return period == CHART_3M ? 21600 : 3600;   // 3M is daily-scale data; 1M hourly
+}
+
+void chartInit() {
+    if (!s_lock) s_lock = xSemaphoreCreateMutex();
+}
+
+void chartSetWakeHook(ChartWakeFn fn) { s_wake = fn; }
+
+// ── Streaming reader ──────────────────────────────────────────────────────
+// The body arrives close-delimited (see the fetch below), so it is consumed a byte at a
+// time from a small buffer. Nothing holds the response: 223 KB never touches the heap.
+
+class ByteStream {
+public:
+    explicit ByteStream(Stream &s) : _s(s) {}
+    int peek() {
+        if (_pos >= _len) {
+            _len = _s.readBytes(_buf, sizeof(_buf));
+            _pos = 0;
+            if (_len == 0) return -1;
+        }
+        return _buf[_pos];
+    }
+    int get() { int c = peek(); if (c >= 0) _pos++; return c; }
+private:
+    Stream &_s;
+    uint8_t _buf[256];
+    size_t  _pos = 0, _len = 0;
+};
+
+static bool isNumberChar(int c) {
+    return c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E' ||
+           (c >= '0' && c <= '9');
+}
+
+// Pull the price of every [timestamp, price] pair out of the "prices" array.
+static bool parsePrices(Stream &src, float *out, int outMax, int &count) {
+    ByteStream in(src);
+
+    // Find "prices" (the response opens with it, but match rather than assume).
+    static const char *KEY = "\"prices\"";
+    const int keyLen = (int)strlen(KEY);
+    int matched = 0, c;
+    while ((c = in.get()) >= 0) {
+        if (c == KEY[matched]) {
+            if (++matched == keyLen) break;
+        } else {
+            matched = (c == KEY[0]) ? 1 : 0;
+        }
+    }
+    if (c < 0) return false;
+
+    while ((c = in.get()) >= 0 && c != '[') {}   // the array itself
+    if (c < 0) return false;
+
+    count = 0;
+    int  depth = 1;          // inside the prices array
+    bool expectPrice = false; // the next number is a price, not a timestamp
+    while (depth > 0) {
+        c = in.peek();
+        if (c < 0) break;                     // truncated body: keep what we have
+        if (c == '[') { depth++; in.get(); }
+        else if (c == ']') { depth--; in.get(); }
+        else if (c == ',' || c == ' ' || c == '\n' || c == '\r' || c == '\t') { in.get(); }
+        else if (isNumberChar(c)) {
+            char num[32];
+            int n = 0;
+            while (n < (int)sizeof(num) - 1) {
+                int d = in.peek();
+                if (!isNumberChar(d)) break;
+                num[n++] = (char)d;
+                in.get();
+            }
+            num[n] = '\0';
+            if (depth == 2) {                 // inside a pair: timestamp then price
+                if (expectPrice) {
+                    if (count < outMax) out[count++] = (float)atof(num);
+                    expectPrice = false;
+                } else {
+                    expectPrice = true;
+                }
+            }
+        } else {
+            in.get();                         // unexpected byte: skip it
+        }
+    }
+    return count > 0;
+}
+
+// Evenly spaced sample of the raw series, keeping the first and last points.
+static int downsample(const float *raw, int n, float *out, int maxPoints) {
+    if (n <= maxPoints) {
+        memcpy(out, raw, (size_t)n * sizeof(float));
+        return n;
+    }
+    for (int i = 0; i < maxPoints; i++) {
+        int idx = (int)((int64_t)i * (n - 1) / (maxPoints - 1));
+        out[i] = raw[idx];
+    }
+    return maxPoints;
+}
+
+// ── Cache ─────────────────────────────────────────────────────────────────
+static void cachePath(char *out, size_t len, const char *coin, int period) {
+    snprintf(out, len, "/cache/c_%s_%d.bin", coin, chartPeriodDays(period));
+}
+
+static bool loadCache(const char *coin, int period, float *out, int &count) {
+    char path[80];
+    cachePath(path, sizeof(path), coin, period);
+
+    SdSession sd;
+    if (!sd.ok()) return false;
+    if (!SD.exists(path)) return false;
+    File f = SD.open(path, FILE_READ);
+    if (!f) return false;
+
+    ChartCacheHeader h {};
+    bool ok = f.read((uint8_t *)&h, sizeof(h)) == sizeof(h)
+           && h.magic == CHART_MAGIC && h.version == CHART_VERSION
+           && (int)h.period == period && h.count > 0 && h.count <= CHART_POINTS;
+    if (ok) {
+        time_t now = time(nullptr);
+        if (now > 1000000 && h.fetchedAt > 0 &&
+            (now - (time_t)h.fetchedAt) > (time_t)chartTtlSec(period)) {
+            ok = false;   // stale
+        }
+    }
+    if (ok) {
+        size_t want = sizeof(float) * h.count;
+        ok = f.read((uint8_t *)out, want) == want;
+        if (ok) count = (int)h.count;
+    }
+    f.close();
+    return ok;
+}
+
+static void saveCache(const char *coin, int period, const float *points, int count) {
+    char path[80];
+    cachePath(path, sizeof(path), coin, period);
+
+    SdSession sd;
+    if (!sd.ok()) return;
+    if (!SD.exists("/cache")) SD.mkdir("/cache");
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) return;
+    ChartCacheHeader h { CHART_MAGIC, CHART_VERSION, (uint32_t)period,
+                         (uint32_t)count, (uint32_t)time(nullptr) };
+    f.write((const uint8_t *)&h, sizeof(h));
+    f.write((const uint8_t *)points, sizeof(float) * (size_t)count);
+    f.close();
+}
+
+// ── Fetch ─────────────────────────────────────────────────────────────────
+// HTTP/1.0 on purpose: CoinGecko answers HTTP/1.1 requests with Transfer-Encoding: chunked,
+// and HTTPClient only strips the chunk framing inside its own body readers. With 1.0 the
+// server closes the connection to end the body instead, so getStream() is plain JSON and
+// can be parsed as it arrives (verified against the live API, 2026-10-25).
+static bool fetchChart(const char *coin, int period, float *points, int &count) {
+    int days = chartPeriodDays(period);
+    if (days == 0) return false;
+
+    char url[256];
+    snprintf(url, sizeof(url),
+             "https://api.coingecko.com/api/v3/coins/%s/market_chart"
+             "?vs_currency=usd&days=%d", coin, days);
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.begin(client, url);
+    http.useHTTP10(true);
+    http.setTimeout(15000);
+    http.addHeader("Accept", "application/json");
+    const char *key = cryptoApiKey();
+    if (key && key[0]) http.addHeader("x-cg-demo-api-key", key);
+
+    int code = http.GET();
+    if (code != 200) {
+        Serial.printf("chart %s/%d: HTTP %d\n", coin, days, code);
+        http.end();
+        return false;
+    }
+
+    int raw = 0;
+    bool ok = parsePrices(http.getStream(), s_raw, CHART_RAW_MAX, raw);
+    http.end();
+    if (!ok) {
+        Serial.printf("chart %s/%d: no prices in response\n", coin, days);
+        return false;
+    }
+    count = downsample(s_raw, raw, points, CHART_POINTS);
+    Serial.printf("chart %s/%d: %d points -> %d\n", coin, days, raw, count);
+    return true;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────
+void chartRequest(const char *coinId, int period) {
+    if (!coinId || period < CHART_1M || period >= CHART_PERIOD_COUNT) return;
+
+    bool wake = false;
+    {
+        ChartLock lock;
+        if (s_pointCount > 0 && s_loadedPeriod == period &&
+            strcmp(s_loadedCoin, coinId) == 0) return;          // already showing it
+        if (s_pendingPeriod == period && strcmp(s_pendingCoin, coinId) == 0) return;
+        strlcpy(s_pendingCoin, coinId, sizeof(s_pendingCoin));
+        s_pendingPeriod = (int8_t)period;
+        wake = true;
+    }
+    if (wake && s_wake) s_wake();
+}
+
+bool chartServicePending() {
+    char coin[32];
+    int  period;
+    {
+        ChartLock lock;
+        if (s_pendingPeriod < 0) return false;
+        strlcpy(coin, s_pendingCoin, sizeof(coin));
+        period = s_pendingPeriod;
+        s_pendingPeriod = -1;
+    }
+
+    float points[CHART_POINTS];
+    int   count = 0;
+
+    if (!loadCache(coin, period, points, count)) {
+        if (!fetchChart(coin, period, points, count)) return false;
+        saveCache(coin, period, points, count);
+    }
+
+    {
+        ChartLock lock;
+        memcpy(s_points, points, sizeof(float) * (size_t)count);
+        s_pointCount = count;
+        strlcpy(s_loadedCoin, coin, sizeof(s_loadedCoin));
+        s_loadedPeriod = period;
+    }
+    s_updated = true;
+    return true;
+}
+
+bool chartConsumeUpdated() {
+    if (!s_updated) return false;
+    s_updated = false;
+    return true;
+}
+
+int chartCopyPoints(const char *coinId, int period, float *out, int maxPoints) {
+    if (!coinId || !out || maxPoints <= 0) return 0;
+    ChartLock lock;
+    if (s_pointCount == 0 || s_loadedPeriod != period) return 0;
+    if (strcmp(s_loadedCoin, coinId) != 0) return 0;
+    int n = s_pointCount < maxPoints ? s_pointCount : maxPoints;
+    memcpy(out, s_points, (size_t)n * sizeof(float));
+    return n;
+}

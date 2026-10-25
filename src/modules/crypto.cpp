@@ -683,6 +683,7 @@ bool cryptoCopyCoinData(const char *coinId, CoinData *out) {
 }
 
 bool cryptoIsFromCache()  { return s_fromCache; }
+const char *cryptoApiKey() { return s_apiKey; }
 void cryptoGetSyncTime(char *buf, size_t len) {
     DataLock lock;
     strlcpy(buf, s_syncTime, len);

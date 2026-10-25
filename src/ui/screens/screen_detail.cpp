@@ -4,13 +4,24 @@
 #include "../widgets.h"
 #include "../../config/config.h"
 #include "../../modules/crypto.h"
+#include "../../modules/chart.h"
 #include "../../modules/time_sync.h"
 #include <cstdio>
 #include <cstring>
 
-static bool  s_shouldExit = false;
-static int   s_graphTab  = 0;   // 0=24H, 1=7D
-static const char *s_tabLabels[] = {"24H", "7D"};
+static bool s_shouldExit = false;
+static int  s_graphTab = CHART_24H;   // ChartPeriod: 24H, 7D, 1M, 3M
+
+// Tab geometry, shared by the draw and the tap handler so they cannot drift apart.
+#define TAB_W    52
+#define TAB_GAP   4
+static int tabX(int t) {
+    int total = CHART_PERIOD_COUNT * TAB_W + (CHART_PERIOD_COUNT - 1) * TAB_GAP;
+    return (SCREEN_W - total) / 2 + t * (TAB_W + TAB_GAP);
+}
+
+// File scope, not stack: the UI task has 8 KB and the CoinData copy already sits here.
+static float s_chartBuf[168];
 
 // ── Draw full sparkline with baseline and grid ─────────────────────────────
 static void drawFullSpark(TFT_eSPI &tft, int x, int y, int w, int h,
@@ -172,20 +183,21 @@ void screenDetailDraw(TFT_eSPI &tft, bool wifiOk, const char *coinId) {
 
     // ── Graph tabs (FONT_MD, slightly taller) ──────────────────────────────
     int tabY = hlY + 42;
-    for (int t = 0; t < 2; t++) {
-        int tx = 80 + t * 66;
-        tft.fillRect(tx, tabY, 60, 20, COL_INPUTBG);
+    for (int t = 0; t < CHART_PERIOD_COUNT; t++) {
+        int tx = tabX(t);
+        tft.fillRect(tx, tabY, TAB_W, 20, COL_INPUTBG);
         if (t == s_graphTab) {
-            tft.drawRect(tx - 1, tabY - 1, 62, 22, g_themeColor);
+            tft.drawRect(tx - 1, tabY - 1, TAB_W + 2, 22, g_themeColor);
             tft.setTextColor(g_themeColor, COL_INPUTBG);
         } else {
-            tft.drawRect(tx, tabY, 60, 20, COL_DIM);
+            tft.drawRect(tx, tabY, TAB_W, 20, COL_DIM);
             tft.setTextColor(COL_DIM, COL_INPUTBG);
         }
         tft.setTextFont(FONT_MD);
-        int tw = tft.textWidth(s_tabLabels[t]);
-        tft.setCursor(tx + (60 - tw) / 2, tabY + 2);
-        tft.print(s_tabLabels[t]);
+        const char *label = chartPeriodLabel(t);
+        int tw = tft.textWidth(label);
+        tft.setCursor(tx + (TAB_W - tw) / 2, tabY + 2);
+        tft.print(label);
     }
 
     // ── Graph area ─────────────────────────────────────────────────────────
@@ -193,29 +205,46 @@ void screenDetailDraw(TFT_eSPI &tft, bool wifiOk, const char *coinId) {
     int graphH = SCREEN_H - graphY - BOTBAR_H - 4;
     int graphW = SCREEN_W - 8;
 
-    const float *sparkData = nullptr;
-    int sparkCount = 0;
-    float sparkChange = 0;
+    const float *graphData = nullptr;
+    int graphCount = 0;
+    float graphChange = 0;
 
-    switch (s_graphTab) {
-        case 0:  // 7D
-            sparkData   = c->spark7d;
-            sparkCount  = c->spark7dCount;
-            sparkChange = c->change7d;
-            break;
-        case 1:  // 24H — show last 24 points of 7d sparkline
-            if (c->spark7dCount >= 24) {
-                sparkData  = c->spark7d + c->spark7dCount - 24;
-                sparkCount = 24;
-            } else {
-                sparkData  = c->spark7d;
-                sparkCount = c->spark7dCount;
-            }
-            sparkChange = c->change24h;
-            break;
+    // The old tab row was inverted: "24H" drew the full 7d series and "7D" drew the last 24
+    // points. The labels and the data are matched up here (2026-10-25).
+    if (s_graphTab == CHART_24H) {
+        if (c->spark7dCount >= 24) {
+            graphData  = c->spark7d + c->spark7dCount - 24;
+            graphCount = 24;
+        } else {
+            graphData  = c->spark7d;
+            graphCount = c->spark7dCount;
+        }
+        graphChange = c->change24h;
+    } else if (s_graphTab == CHART_7D) {
+        graphData   = c->spark7d;
+        graphCount  = c->spark7dCount;
+        graphChange = c->change7d;
+    } else {
+        // 1M / 3M come from /market_chart via the worker. Ask once; the request is ignored
+        // if it is already loaded or already queued, so calling it during a draw is safe.
+        int n = chartCopyPoints(coinId, s_graphTab, s_chartBuf, 168);
+        if (n > 0) {
+            graphData   = s_chartBuf;
+            graphCount  = n;
+            graphChange = s_chartBuf[n - 1] - s_chartBuf[0];
+        } else {
+            chartRequest(coinId, s_graphTab);
+            tft.setTextFont(FONT_MD);
+            tft.setTextColor(g_themeColor, COL_BG);
+            const char *msg = "Loading chart...";
+            tft.setCursor(4 + (graphW - tft.textWidth(msg)) / 2, graphY + graphH / 2 - 8);
+            tft.print(msg);
+        }
     }
 
-    drawFullSpark(tft, 4, graphY, graphW, graphH, sparkData, sparkCount, sparkChange);
+    if (graphData) {
+        drawFullSpark(tft, 4, graphY, graphW, graphH, graphData, graphCount, graphChange);
+    }
 
     // ── Bottombar: just back indicator ──────────────────────────────────────
     tft.fillRect(0, SCREEN_H - BOTBAR_H, SCREEN_W, BOTBAR_H, COL_BG);
@@ -237,11 +266,11 @@ void screenDetailTap(TFT_eSPI &tft, int16_t x, int16_t y, bool wifiOk) {
     // position matches the updated layout in screenDetailDraw
     int tabY = CONTENT_Y + 48 + 44 + 42;  // price + stat + high/low + gap
     if (y >= tabY && y < tabY + 22) {
-        for (int t = 0; t < 2; t++) {
-            int tx = 80 + t * 66;
-            if (x >= tx && x < tx + 60) {
-                s_graphTab = t;
-                return;  // tab changed, redraw will pick up new tab
+        for (int t = 0; t < CHART_PERIOD_COUNT; t++) {
+            int tx = tabX(t);
+            if (x >= tx && x < tx + TAB_W) {
+                s_graphTab = t;   // the draw will request 1M/3M if it has nothing
+                return;
             }
         }
     }

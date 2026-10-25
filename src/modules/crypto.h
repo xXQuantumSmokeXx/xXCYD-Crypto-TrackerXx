@@ -74,6 +74,7 @@ void cryptoGetFearGreedLabel(char *buf, size_t len);
 // fetch worker may be rewriting a coin on the other core while the UI draws.
 bool cryptoCopyCoinData(const char *coinId, CoinData *out);
 bool cryptoIsFromCache();
+const char *cryptoApiKey();   // CoinGecko key from SD or build flag ("" when none)
 void cryptoGetSyncTime(char *buf, size_t len);             // "2:05 PM"
 
 // ── Custom coins from SD ─────────────────────────────────────────────────
