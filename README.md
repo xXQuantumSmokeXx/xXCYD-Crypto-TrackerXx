@@ -188,7 +188,33 @@ sd_card/
 
 ## Changelog
 
-### v1.1.6 (unreleased)
+### v1.1.10
+- **Diagnostics:** the SD price cache no longer fails silently. Mount, mkdir, open and write
+  failures print to serial, along with `cache: created /cache/btc.bin (…)` the first time the
+  file is written. It had been failing with no output at all, which is why an offline boot
+  always looked like "no data".
+
+### v1.1.9
+- **Fixed:** a key CoinGecko does not accept no longer blanks the screen. A rejected key
+  (401/403) is logged, dropped for the session, and the request is retried anonymously; a
+  key that does not start with `CG-` is called out at boot instead of showing up as a wall of
+  401s.
+
+### v1.1.8
+- **Fixed:** a boot that missed WiFi stayed offline for the whole session. `setup()` waited
+  12 s for the association once, and nothing ever re-checked `WiFi.status()`, so a slow
+  router left `s_wifiOk` false with no retry — "Loading data..." until a reboot. The link is
+  now checked every 10 s, the driver is nudged every 30 s while down, SNTP starts when it
+  comes up, and a fetch runs immediately on reconnect.
+
+### v1.1.7
+- **Fixed:** the device could sit on "Loading data..." forever. Sparklines were fetched as
+  one ~80 KB response, and on the device `getString()` returned that body truncated, so every
+  parse failed with `IncompleteInput`. The SD cache had been hiding it — pull the card, and
+  there was nothing left to draw. Prices now come in one ~17 KB request (the size the minute
+  refresh has always used) and sparklines go four coins at a time.
+
+### v1.1.6
 - **New:** `/batt.csv` on the SD card, one line a minute — raw pin mV, cell voltage before
   and after sag compensation, percentage and WiFi state. A discharge only happens off USB,
   where there is no serial to watch, so this is how the battery curve gets measured.

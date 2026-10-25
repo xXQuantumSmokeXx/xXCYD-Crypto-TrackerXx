@@ -8,6 +8,26 @@
       that low or their divider constant differs — compare a resting cell against a meter.
 - [x] **Sparkline split** (2026-10-25) — prices every minute (17,035 bytes for 20 coins),
       sparklines hourly (80,831). See "Landed".
+- [x] **"Loading data..." with no SD card (2026-10-25)** — the 80 KB sparkline response came
+      back truncated on the device (`IncompleteInput`), so every fetch failed and only the SD
+      cache was keeping the screen alive. Prices now go in one ~17 KB request and sparklines
+      four coins at a time. See "Landed".
+- [x] **WiFi is supervised, not assumed (2026-10-25)** — one slow association at boot used to
+      leave the device offline for the whole session (clock stuck at 2011, "Loading data..."
+      with no cache). `loop()` checks the link every 10 s, nudges the driver every 30 s while
+      down, starts SNTP when it comes up, and fetches on reconnect. See the WiFi note in
+      "Landed".
+- [ ] **Sparkline response: stream it instead of batching** (decided 2026-10-25) — the 80 KB
+      `sparkline=true` body cannot go through `getString()`, so it is split into four-coin
+      requests. That costs 6 calls per refresh against an anonymous ceiling of ~5/minute, and
+      the last batch (AAVE, HBAR, COQ) 429s every time. De-chunk and parse the stream the way
+      `chart.cpp` already does for 1M/3M: one request, flat memory, no rate-limit edge. This is
+      the proper fix; an `apikey.txt` CoinGecko demo key is the stopgap.
+- [ ] **SD cache is never written to the card** (found 2026-10-25) — after a session that
+      fetched successfully and drew live data with the card inserted, `/cache/btc.bin` was
+      still absent. `saveCacheToSD()` had been failing silently (no log at all). v1.1.10 logs
+      mount/mkdir/open/write failures and the first successful creation; needs a device run to
+      see which step fails. Until this works, every offline boot starts from nothing.
 - [x] **Multi-Period Charts — 24H / 7D / 1M / 3M** (2026-10-25) — see "Landed".
 - [x] **Charts — 3M is the longest period** (decided 2026-10-25). 6M, 1Y and ALL are not
       planned; 3M covers what the Commander wants and the tabs stay at four. For the record
@@ -60,11 +80,16 @@ finishes on the worker, so anything that resets the device in that window leaves
 unloaded (the SD cache makes the next attempt instant); and the app's partition slot
 (`cydcry`, 1,088 KB) is 5% free against a 1,058 KB binary.
 
-v1.1.6 (unreleased) adds `/batt.csv`; that build is on the 1-USB card waiting for a
-discharge capture.
+v1.1.7 / v1.1.8 / v1.1.9 on a 2-USB CYD (2026-10-25): the truncated sparkline body is gone —
+`sparklines: 4/5 batch(es), 188320 bytes free`, page 1 fully live with all four sparklines and
+the clock synced. v1.1.8's WiFi supervision brought the link up after the boot association had
+failed (the 2011 clock and `LIVE --:--` were the tell), so the retry path is exercised. The
+1M/3M chart periods were not re-checked on this build. v1.1.9's rejected-key fallback was not
+exercised: the bad key was deleted rather than left in place.
 
-Not yet exercised on hardware: the offline cache (WiFi off, >5 min, reboot), `F` with no
-network, a custom coin on a page, and the battery log itself.
+Not yet exercised on hardware: the offline cache (the cache file is missing entirely — see
+NEXT_RELEASE), `F` with no network, a custom coin on a page, the battery log, and the 401
+fallback.
 
 **Offline cache actually works** — it did not. `cryptoFetch(force)` zeroed `btc_cached_at`
 before trying the network, so a failed forced fetch (startup's retries, the `F` key)
@@ -96,6 +121,41 @@ data, so they are now fetched only when `spark_fetched_at` is over an hour old o
 assigned coin has none (a new coin, or an older cache); price-only refreshes leave the
 existing points untouched. The `String` and document behind a normal minute are ~64 KB
 smaller.
+
+**The 80 KB body does not survive `getString()`** — found 2026-10-25 while the SD card was in
+the PC. Serial showed `coins/markets parse failed: IncompleteInput` on every attempt; the
+same URL from a PC returned 73,642 bytes in 0.23 s, so the API and the network were fine.
+`_size` is -1 for a chunked reply, so `getString()` grows one `String` chunk by chunk and a
+body this size comes back cut short; only the SD cache was covering for it. `fetchCoins()`
+now always requests prices first as one ~17 KB body (the size the minute refresh has been
+using successfully), then sparklines in batches of four (`SPARK_BATCH_MAX`, ~16 KB each).
+Confirmed on hardware at v1.1.7: prices and four of five batches parsed, 188 KB free (the
+fifth got a 429 — see the API-key note below). The parse-failure line now prints the
+received length and free heap.
+
+**WiFi was trusted, not checked** — a boot that missed the association left `s_wifiOk` false
+for the whole session: `connectWifi()` waited 12 s once and nothing ever looked at
+`WiFi.status()` again, and SNTP was started only inside the `if (s_wifiOk)` branch. On
+2026-10-25 that produced a 2011 clock, `LIVE --:--` and "Loading data..." on a card with no
+cache. `loop()` now checks the link every 10 s, calls `WiFi.reconnect()` every 30 s while
+down, starts SNTP the first time it comes up, and forces a fetch on the transition. Untested
+on hardware as of this writing.
+
+**Anonymous CoinGecko quota** — the boot/refresh burst is one price request plus five
+sparkline batches. The public limit is around 5 calls/minute, so the last batch was the one
+getting 429 (`sparkline batch 5 failed (ids 16-18)` — AAVE, HBAR, COQ, whose rows then draw
+no sparkline because `drawSpark` needs two points). Confirmed on the 2-USB at v1.1.9: page 1
+live, 4/5 batches. A CoinGecko demo key (`CG-…`, single line in `apikey.txt`) raises the limit
+to ~30/min and is the stopgap until the streaming rewrite in NEXT_RELEASE.
+
+**A key for the wrong service** — 2026-10-25: `apikey.txt` held a 36-byte UUID, i.e. a
+LiveCoinWatch key (the user's paste of `{currency, sort, order, offset, limit, meta}` is that
+API's `/coins/list` body), and CoinGecko answered 401 to every request. With no cache on the
+card the screen sat on "Loading data..." and the serial showed one line a minute. Two changes:
+`requestCoins()` now retries once without the key and clears it for the session, and
+`cryptoInit()` says so at boot when the line does not start with `CG-`. The app speaks only
+CoinGecko; using LiveCoinWatch would mean rewriting the whole data layer (POST bodies,
+`x-api-key`, different fields and history endpoint), not swapping a header.
 
 **Finding for the chart work** — CoinGecko answers `Transfer-Encoding: chunked` with no
 `Content-Length`, and only `HTTPClient`'s own body readers strip the chunk framing.
