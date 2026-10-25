@@ -1,6 +1,7 @@
 #include "touch.h"
 #include "../config/config.h"
 #include "../config/nvs_config.h"
+#include "../config/spi_bus.h"
 #include <XPT2046_Touchscreen.h>
 #include <SPI.h>
 
@@ -19,8 +20,16 @@ static int16_t  s_lastX   = 0, s_lastY  = 0;
 static uint32_t s_touchMs = 0;
 
 static bool rawToScreen(int16_t *sx, int16_t *sy) {
-    if (!g_ts.touched()) return false;
-    TS_Point p = g_ts.getPoint();
+    // touched() and getPoint() are one reading: hold the bus across both, or a cache write
+    // on core 0 can land between them and the coordinate comes from a re-muxed bus.
+    bool     touched = false;
+    TS_Point p;
+    {
+        SpiLock lock;
+        touched = g_ts.touched();
+        if (touched) p = g_ts.getPoint();
+    }
+    if (!touched) return false;
     *sx = map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0,           SCREEN_W - 1);
     *sy = map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, SCREEN_H - 1, 0);
 #if CYD_USB_VERSION == 2
@@ -30,6 +39,19 @@ static bool rawToScreen(int16_t *sx, int16_t *sy) {
     *sx = constrain(*sx, 0, SCREEN_W - 1);
     *sy = constrain(*sy, 0, SCREEN_H - 1);
     return true;
+}
+
+// Every SdSession calls this on its way out: mounting the card left VSPI muxed to the SD
+// pins, and the touch driver's SPIClass has no way to know. Re-begin it before the next
+// read. Safe to call at any time - the bus mutex is held by the caller.
+static void touchBusReinit() {
+    g_touchSPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+    g_ts.begin(g_touchSPI);
+#if CYD_USB_VERSION == 2
+    g_ts.setRotation(s_touchRotation);
+#else
+    g_ts.setRotation(0);
+#endif
 }
 
 void touchInit() {
@@ -47,6 +69,7 @@ void touchInit() {
 #else
     g_ts.setRotation(0);
 #endif
+    spiBusSetRestore(touchBusReinit);
 }
 
 TouchEvent touchPoll() {

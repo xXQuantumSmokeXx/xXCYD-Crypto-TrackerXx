@@ -1,6 +1,7 @@
 #include "wifi_config.h"
 #include "../config/config.h"
 #include "../config/nvs_config.h"
+#include "../config/spi_bus.h"
 #include <SD.h>
 #include <SPI.h>
 #include <cstring>
@@ -16,11 +17,13 @@ static void trimCRLF(char *s) {
 }
 
 void wifiConfigLoad() {
-    SPI.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
-    if (!SD.begin(SD_CS)) return;   // no SD card — use NVS
+    // SdSession takes the bus and mounts; SD.begin() does its own SPI.begin() with the SD
+    // pins, so the explicit call that used to be here was redundant.
+    SdSession sd;
+    if (!sd.ok()) return;   // no SD card — use NVS
 
     File f = SD.open("/wifi.txt");
-    if (!f) { SD.end(); return; }   // no wifi.txt — use NVS
+    if (!f) return;   // no wifi.txt — use NVS
 
     char ssid[64] = {}, pass[64] = {};
     if (f.available()) {
@@ -34,7 +37,6 @@ void wifiConfigLoad() {
         trimCRLF(pass);
     }
     f.close();
-    SD.end();
 
     if (ssid[0]) {
         nvsPutStr("wifi_ssid", ssid);

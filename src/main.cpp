@@ -10,6 +10,7 @@
 
 #include "config/config.h"
 #include "config/nvs_config.h"
+#include "config/spi_bus.h"
 #include "modules/brightness.h"
 #include "modules/wifi_config.h"
 #include "ui/theme.h"
@@ -547,6 +548,7 @@ void setup() {
     ledSet(false, false, false);
 
     nvsInit();
+    spiBusInit();   // before any SD or touch access — both take this mutex
 
     // ── Migrate calibration keys from CYD-Weather's "cydwx" namespace ─────
     // Avoids re-running display/touch calibration on 2USB boards.

@@ -1,6 +1,7 @@
 #include "crypto.h"
 #include "../config/config.h"
 #include "../config/nvs_config.h"
+#include "../config/spi_bus.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -221,39 +222,99 @@ static int cryptoCollectActiveIds(const char **idsOut, int maxIds) {
 }
 
 // ── SD cache ─────────────────────────────────────────────────────────────
-static bool saveCacheToSD(const String &json) {
-    if (!SD.begin(SD_CS)) return false;
-    if (!SD.exists("/cache")) SD.mkdir("/cache");
-    File f = SD.open("/cache/btc.json", FILE_WRITE);
-    if (!f) { SD.end(); return false; }
-    f.print(json);
-    f.close();
-    SD.end();
-    nvsPutInt("btc_cached_at", (int)time(nullptr));
-    return true;
+// Binary, not the raw JSON. The old cache stored the whole response - ~79 KB for 20 coins
+// (measured against the live API), written and then re-parsed on reload - and every one of
+// those bytes was a String allocation on a device with ~300 KB of heap. This is one
+// fixed-size record per coin, 15.5 KB for 20, needs no parser to read back, and cannot
+// fail for want of memory. The old btc.json is simply ignored; no migration needed.
+#define CACHE_FILE    "/cache/btc.bin"
+#define CACHE_MAGIC   0x314B5943u   // "CYK1"
+#define CACHE_VERSION 1
+
+struct CacheHeader {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t count;
+};
+
+// The file is raw CoinData records, so the layout IS the format. If the struct ever
+// changes, CACHE_VERSION has to change with it or old files read back as garbage - fail
+// the build instead of finding that out on the device.
+static_assert(sizeof(CoinData) == 776, "CoinData changed - bump CACHE_VERSION");
+
+static void setSyncTimeFrom(time_t t) {
+    struct tm ti;
+    if (!localtime_r(&t, &ti)) return;
+    int h = ti.tm_hour;
+    const char *ap = h >= 12 ? "PM" : "AM";
+    if (h > 12) h -= 12;
+    else if (h == 0) h = 12;
+    snprintf(s_syncTime, sizeof(s_syncTime), "%d:%02d %s", h, ti.tm_min, ap);
 }
 
-static bool loadCacheFromSD(String &json) {
+static bool saveCacheToSD() {
+    SdSession sd;
+    if (!sd.ok()) return false;
+    if (!SD.exists("/cache")) SD.mkdir("/cache");
+    File f = SD.open(CACHE_FILE, FILE_WRITE);
+    if (!f) return false;
+
+    CacheHeader h { CACHE_MAGIC, CACHE_VERSION, (uint16_t)s_coinCount };
+    size_t want = sizeof(CoinData) * (size_t)s_coinCount;
+    bool ok = f.write((const uint8_t *)&h, sizeof(h)) == sizeof(h)
+           && f.write((const uint8_t *)s_coinCache, want) == want;
+    f.close();
+    if (ok) nvsPutInt("btc_cached_at", (int)time(nullptr));
+    return ok;
+}
+
+static bool loadCacheFromSD() {
     int cachedAt = nvsGetInt("btc_cached_at", 0);
     if (cachedAt == 0) return false;
     time_t now = time(nullptr);
     if (now > 1000000 && (now - cachedAt) > CACHE_TTL_SEC) return false;
-    if (!SD.begin(SD_CS)) return false;
-    if (!SD.exists("/cache/btc.json")) { SD.end(); return false; }
-    File f = SD.open("/cache/btc.json", FILE_READ);
-    if (!f) { SD.end(); return false; }
-    json = "";
-    while (f.available()) json += (char)f.read();
+
+    SdSession sd;
+    if (!sd.ok()) return false;
+    if (!SD.exists(CACHE_FILE)) return false;
+    File f = SD.open(CACHE_FILE, FILE_READ);
+    if (!f) return false;
+
+    CacheHeader h {};
+    bool ok = f.read((uint8_t *)&h, sizeof(h)) == sizeof(h)
+           && h.magic == CACHE_MAGIC && h.version == CACHE_VERSION && h.count <= COIN_MAX;
+    if (ok) {
+        size_t want = sizeof(CoinData) * (size_t)h.count;
+        ok = f.read((uint8_t *)s_coinCache, want) == want;
+        if (ok) {
+            s_coinCount = h.count;
+            setSyncTimeFrom((time_t)cachedAt);
+        }
+    }
     f.close();
-    SD.end();
-    return json.length() > 10;
+    return ok;
 }
 
 // ── JSON parser for coins/markets ─────────────────────────────────────────
-static void parseCoinsJson(const String &json) {
-    JsonDocument doc;
-    if (deserializeJson(doc, json)) return;
-    JsonArray arr = doc.as<JsonArray>();
+// CoinGecko sends 28 fields per coin and the UI reads nine of them (checked against the
+// live API on 2026-10-25). The 168-point sparkline is most of the bytes either way, so the
+// saving here is per-coin overhead rather than a step change - the cache below is what
+// removes the big allocation.
+static void buildCoinFilter(JsonDocument &filter) {
+    JsonArray  arr  = filter.to<JsonArray>();
+    JsonObject coin = arr.add<JsonObject>();
+    coin["id"] = true;
+    coin["symbol"] = true;
+    coin["name"] = true;
+    coin["current_price"] = true;
+    coin["price_change_percentage_24h"] = true;
+    coin["price_change_percentage_7d_in_currency"] = true;
+    coin["high_24h"] = true;
+    coin["low_24h"] = true;
+    coin["sparkline_in_7d"]["price"] = true;
+}
+
+static void applyCoinsJson(JsonArray arr) {
     if (arr.isNull()) return;
 
     // Don't invalidate existing data — only update coins found in the response.
@@ -341,11 +402,36 @@ static bool fetchCoins() {
 #endif
     int code = http.GET();
     if (code != 200) { http.end(); return false; }
+
+    // getString(), NOT getStream(). CoinGecko answers "Transfer-Encoding: chunked" with no
+    // Content-Length (checked against the live API on 2026-10-25), and the chunk framing is
+    // stripped only inside HTTPClient's own body readers - getStream() hands back the raw
+    // socket, so parsing it would feed chunk-size lines to the JSON parser. The copy this
+    // costs is repaid by the filter below, which keeps the document to the nine fields the
+    // UI reads instead of every field CoinGecko sends.
     String json = http.getString();
     http.end();
+    if (json.length() == 0) return false;
 
-    parseCoinsJson(json);
-    saveCacheToSD(json);
+    JsonDocument filter;
+    buildCoinFilter(filter);
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, json,
+                                               DeserializationOption::Filter(filter));
+    if (err) {
+        Serial.printf("coins/markets parse failed: %s\n", err.c_str());
+        return false;   // cryptoFetch falls through to the cache
+    }
+
+    JsonArray coins = doc.as<JsonArray>();
+    if (coins.isNull() || coins.size() == 0) {
+        // Never write an empty cache over a good one: if the filter or the response shape
+        // ever drifts, the screen should keep showing the last real prices.
+        Serial.println("coins/markets returned no usable coins");
+        return false;
+    }
+    applyCoinsJson(coins);
+    saveCacheToSD();
     s_fromCache = false;
     return true;
 }
@@ -382,15 +468,8 @@ bool cryptoFetch(bool force) {
         }
     }
 
-    // Fall back to SD cache
-    String json;
-    if (loadCacheFromSD(json)) {
-        const char *ids[COIN_MAX];
-        s_coinCount = cryptoCollectActiveIds(ids, COIN_MAX);
-        for (int i = 0; i < s_coinCount; i++) {
-            strlcpy(s_coinCache[i].id, ids[i], sizeof(s_coinCache[i].id));
-        }
-        parseCoinsJson(json);
+    // Fall back to the SD cache - it holds the same records the network path fills in.
+    if (loadCacheFromSD()) {
         s_fromCache = true;
         return true;
     }
@@ -418,12 +497,13 @@ void cryptoGetFearGreedLabel(char *buf, size_t len) {
 // ── Custom coins from SD ──────────────────────────────────────────────────
 void cryptoLoadCustomCoins() {
     g_customCoinCount = 0;
-    if (!SD.begin(SD_CS)) return;
+    SdSession sd;
+    if (!sd.ok()) return;
 
-    if (!SD.exists("/custom_coins.txt")) { SD.end(); return; }
+    if (!SD.exists("/custom_coins.txt")) return;
 
     File f = SD.open("/custom_coins.txt", FILE_READ);
-    if (!f) { SD.end(); return; }
+    if (!f) return;
 
     while (f.available() && g_customCoinCount < CUSTOM_COINS_MAX) {
         String line = f.readStringUntil('\n');
@@ -466,7 +546,6 @@ void cryptoLoadCustomCoins() {
         g_customCoinCount++;
     }
     f.close();
-    SD.end();
     Serial.printf("Loaded %d custom coins from SD\n", g_customCoinCount);
 }
 
@@ -493,8 +572,9 @@ void cryptoInit() {
     }
 
     // Load API key from SD (if present) — overrides compile-time define
-    if (SD.begin(SD_CS)) {
-        if (SD.exists("/apikey.txt")) {
+    {
+        SdSession sd;
+        if (sd.ok() && SD.exists("/apikey.txt")) {
             File f = SD.open("/apikey.txt", FILE_READ);
             if (f) {
                 String key = f.readStringUntil('\n');
@@ -506,7 +586,6 @@ void cryptoInit() {
                 f.close();
             }
         }
-        SD.end();
     }
     cryptoLoadCustomCoins();  // reads /custom_coins.txt from SD
     cryptoPagesLoad();
