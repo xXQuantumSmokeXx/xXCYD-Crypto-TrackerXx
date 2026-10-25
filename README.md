@@ -174,9 +174,12 @@ sd_card/
 ## Changelog
 
 ### v1.1.5 (unreleased)
-- **New:** multi-period charts on the detail screen — 24H, 7D, 1M and 3M. 1M/3M come from
+- **New:** multi-period charts — 24H, 7D, 1M and 3M. A single-coin page cycles all four on
+  tap; a multi-coin page opens that coin's detail chart on tap. 1M/3M come from
   `/coins/{id}/market_chart`, fetched on the worker and cached per coin+period on the SD card
   (1 hour for 1M, 6 hours for 3M).
+- **Fixed:** tapping a multi-coin page did nothing, which also left the detail screen
+  unreachable — nothing ever set the tapped coin.
 - **Fixed:** the 24H and 7D tabs were swapped — "24H" drew the whole 7-day series and "7D"
   drew the last 24 points.
 - **Note:** the 1M and 3M responses are 74 KB and 223 KB, so they are parsed as a stream and

@@ -4,13 +4,17 @@
 #include "../widgets.h"
 #include "../../config/config.h"
 #include "../../modules/crypto.h"
+#include "../../modules/chart.h"
 #include "../../modules/brightness.h"
 #include "../../modules/time_sync.h"
 #include <cstdio>
 #include <cstring>
 
 static char s_tappedCoinId[32] = "";
-static int  s_oneCoinGraphMode = 0;   // 0=24H, 1=7D
+static int  s_oneCoinGraphMode = CHART_24H;   // ChartPeriod: 24H, 7D, 1M, 3M
+
+// File scope, not stack: the UI task has 8 KB and a CoinData copy is already in play.
+static float s_chartBuf[168];
 
 // ── Format price with comma separators ────────────────────────────────────
 static void formatPrice(double price, char *out, int outLen) {
@@ -135,8 +139,8 @@ static void drawOneCoin(TFT_eSPI &tft, int contentY, int contentH, const CoinDat
     snprintf(hlBuf, sizeof(hlBuf), "$%.2f", (double)c.low24h);
     tft.print(hlBuf);
 
-    // ── Chart mode label (right side, FONT_MD) ─────────────────────────────
-    const char *modeLabel = (s_oneCoinGraphMode == 0) ? "24H" : "7D";
+    // ── Chart period label (right side, FONT_MD) ───────────────────────────
+    const char *modeLabel = chartPeriodLabel(s_oneCoinGraphMode);
     {
         char modeBuf[14];
         snprintf(modeBuf, sizeof(modeBuf), "%s CHART", modeLabel);
@@ -154,16 +158,17 @@ static void drawOneCoin(TFT_eSPI &tft, int contentY, int contentH, const CoinDat
         tft.print(hint);
     }
 
-    // ── Inline graph — switches between 24H / 7D on tap ───────────────────
+    // ── Inline graph — cycles 24H / 7D / 1M / 3M on tap ───────────────────
     int sparkY = hlY + 42;
     int sparkH = contentY + contentH - sparkY - 4;
+    int sparkW = SCREEN_W - 8;
 
     const float *sparkData = nullptr;
     int sparkCount = 0;
     float sparkChange = 0;
 
-    if (s_oneCoinGraphMode == 0) {
-        // 24H — last 24 points of 7d sparkline
+    if (s_oneCoinGraphMode == CHART_24H) {
+        // Last 24 points of the 7d sparkline
         if (c.spark7dCount >= 24) {
             sparkData  = c.spark7d + c.spark7dCount - 24;
             sparkCount = 24;
@@ -172,16 +177,32 @@ static void drawOneCoin(TFT_eSPI &tft, int contentY, int contentH, const CoinDat
             sparkCount = c.spark7dCount;
         }
         sparkChange = c.change24h;
-    } else {
-        // 7D
+    } else if (s_oneCoinGraphMode == CHART_7D) {
         sparkData   = c.spark7d;
         sparkCount  = c.spark7dCount;
         sparkChange = c.change7d;
+    } else {
+        // 1M / 3M: fetched by the worker. Asking during a draw is safe - the request is
+        // ignored when that coin+period is already loaded or already queued.
+        int n = chartCopyPoints(c.id, s_oneCoinGraphMode, s_chartBuf, 168);
+        if (n > 0) {
+            sparkData   = s_chartBuf;
+            sparkCount  = n;
+            sparkChange = s_chartBuf[n - 1] - s_chartBuf[0];
+        } else {
+            chartRequest(c.id, s_oneCoinGraphMode);
+        }
     }
 
     if (sparkH > 16 && sparkCount >= 2) {
-        drawSpark(tft, 4, sparkY, SCREEN_W - 8, sparkH,
+        drawSpark(tft, 4, sparkY, sparkW, sparkH,
                   sparkData, sparkCount, sparkChange, true);
+    } else if (s_oneCoinGraphMode >= CHART_1M && sparkH > 16) {
+        tft.setTextFont(FONT_MD);
+        tft.setTextColor(g_themeColor, COL_BG);
+        const char *msg = "Loading chart...";
+        tft.setCursor(4 + (sparkW - tft.textWidth(msg)) / 2, sparkY + sparkH / 2 - 8);
+        tft.print(msg);
     }
 }
 
@@ -411,17 +432,29 @@ void screenCryptoTap(TFT_eSPI &tft, int16_t x, int16_t y, int page, bool wifiOk)
     int coinCount = cryptoPageCountActive(page);
     if (coinCount == 0) return;
 
-    // For 1-coin pages: tap cycles graph mode inline (no detail screen)
+    // For 1-coin pages: tap cycles the chart period inline (there is no detail screen -
+    // gotoDetail() is unreachable, nothing ever sets s_tappedCoinId)
     if (coinCount == 1) {
         if (y >= contentY && y < contentY + contentH) {
-            s_oneCoinGraphMode = (s_oneCoinGraphMode + 1) % 2;  // 24H ↔ 7D
+            s_oneCoinGraphMode = (s_oneCoinGraphMode + 1) % CHART_PERIOD_COUNT;
         }
         return;
     }
 
-    // For multi-coin pages: tap does nothing for now (detail screen disabled)
-    // The mini sparklines already show the 7D trend inline.
-    (void)x; (void)y;  // unused in multi-coin case
+    // Multi-coin pages: a tap opens that coin's detail chart (2026-10-25). Until now this
+    // was a no-op, which also meant the detail screen was unreachable - nothing ever set
+    // s_tappedCoinId. Every multi-coin layout draws rows of contentH / coinCount, so the
+    // row under the finger is the slot to open.
+    (void)x;
+    int rowH = contentH / coinCount;
+    if (rowH > 0) {
+        int row = (y - contentY) / rowH;
+        if (row >= 0 && row < coinCount) {
+            int idx = cryptoPageGetCoin(page, row);
+            const CoinDef *def = coinGetDef(idx);
+            if (def) strlcpy(s_tappedCoinId, def->id, sizeof(s_tappedCoinId));
+        }
+    }
     return;
 }
 
