@@ -36,6 +36,14 @@ enum AppScreen {
     SCR_COUNT = 6       // normal screens (0-5)
 };
 
+// Screens that draw coin data and therefore need a repaint when it changes. SCR_DETAIL (7)
+// sits above SCR_COUNT (6), and the old `< SCR_COUNT` test silently excluded it - so a
+// chart that arrived while the detail screen was open never appeared until the next tap
+// repainted the screen (2026-10-25).
+static bool screenShowsCoinData(int screen) {
+    return screen < SCR_COUNT || screen == SCR_DETAIL;
+}
+
 static int           s_screen         = 0;
 static int           s_cryptoPage     = 0;   // which crypto page (0-4) we're viewing
 static bool          s_needsRedraw    = true;
@@ -676,11 +684,11 @@ void loop() {
         xSemaphoreTake(s_dataMutex, portMAX_DELAY);
         s_fetchDone = false;
         xSemaphoreGive(s_dataMutex);
-        if (s_screen < SCR_COUNT) s_needsRedraw = true;
+        if (screenShowsCoinData(s_screen)) s_needsRedraw = true;
     }
 
     // A chart finished loading on the worker - draw it
-    if (chartConsumeUpdated() && s_screen < SCR_COUNT) s_needsRedraw = true;
+    if (chartConsumeUpdated() && screenShowsCoinData(s_screen)) s_needsRedraw = true;
 
     // Clock tick — update time in topbar without full redraw
     if (millis() - s_lastMinute > 60000) {
