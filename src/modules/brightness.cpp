@@ -1,8 +1,10 @@
 #include "brightness.h"
 #include "../config/config.h"
 #include "../config/nvs_config.h"
+#include "../config/spi_bus.h"
 #include "../ui/theme.h"
 #include <Arduino.h>
+#include <WiFi.h>
 
 #define BATT_PIN 34   // GPIO34 — voltage divider (100k/100k) to LiPo
 
@@ -78,6 +80,12 @@ void brightnessOff() {
 // draw path reads this instead (2026-10-25).
 static volatile int s_batteryPct = -1;
 
+// Kept so the logger can write the raw reading beside the treated one: a resting cell
+// measured with a meter against `cell_raw_v` is what settles the divider constant.
+static int   s_lastPinMv   = 0;
+static float s_lastCellRaw = 0.0f;
+static float s_lastCell    = 0.0f;
+
 void batteryPctSample() {
     // Multi-sample averaging to reduce ESP32 ADC noise (50 samples)
     long sum = 0;
@@ -88,6 +96,9 @@ void batteryPctSample() {
     int pinMv = sum / BATT_SAMPLES;
 
     if (pinMv < 100) { s_batteryPct = -1; return; }  // near-zero mV = floating/disconnected
+
+    s_lastPinMv   = pinMv;
+    s_lastCellRaw = (pinMv / 1000.0f) * BATT_DIVIDER_RATIO;   // before sag compensation
 
     // analogReadMilliVolts uses factory eFuse calibration — gives actual pin mV.
     // Apply sag compensation before divider multiplication so the offset scales.
@@ -136,7 +147,43 @@ void batteryPctSample() {
         pct == 0 || pct == 100) {
         s_shownPct = pct;
     }
+    s_lastCell = vBat;
     s_batteryPct = s_shownPct;
+}
+
+// ── Battery log ───────────────────────────────────────────────────────────
+// One line a minute to /batt.csv, because the interesting reading - a cell discharging -
+// only exists while the board is NOT on USB, and then there is no serial to watch. Pull the
+// card afterwards and the whole curve is in the file. Rotates at 64 KB (about 18 hours).
+// See TODO.md: this exists to produce the data for the curve and divider work.
+void batteryLogTick() {
+    static uint32_t lastLog = 0;
+    uint32_t nowMs = millis();
+    if (lastLog && (nowMs - lastLog) < 60000) return;
+    lastLog = nowMs;
+
+    SdSession sd;
+    if (!sd.ok()) return;
+
+    const char *path = "/batt.csv";
+    bool fresh = !SD.exists(path);
+    File f = SD.open(path, FILE_APPEND);
+    if (!f) return;
+
+    if (fresh) f.println("epoch,uptime_s,pin_mv,cell_raw_v,cell_v,pct,wifi");
+    char line[96];
+    snprintf(line, sizeof(line), "%ld,%lu,%d,%.3f,%.3f,%d,%d",
+             (long)time(nullptr), (unsigned long)(nowMs / 1000), s_lastPinMv,
+             (double)s_lastCellRaw, (double)s_lastCell, (int)s_batteryPct,
+             (WiFi.status() == WL_CONNECTED) ? 1 : 0);
+    f.println(line);
+    size_t size = f.size();
+    f.close();
+
+    if (size > 64 * 1024) {
+        SD.remove("/batt.old.csv");
+        SD.rename(path, "/batt.old.csv");
+    }
 }
 
 // The value the UI draws. Sampling happens on a slow tick in loop() so the draw path never

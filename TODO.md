@@ -145,6 +145,12 @@ Tap-to-cycle through chart periods on single-coin view and detail screen.
 
 5. **Samples taken during WiFi TX bursts.** WiFi radio spikes current draw; sporadic low readings feed into the average.
 
+**Measurement in place (2026-10-25):** `/batt.csv`, one line a minute —
+`epoch,uptime_s,pin_mv,cell_raw_v,cell_v,pct,wifi`. Run the board on the cell (USB charges
+it, so a plugged-in run measures the charger, not the battery), pull the card afterwards.
+`cell_raw_v` against a meter reading of a resting cell settles `BATT_DIVIDER_RATIO`; the
+shape of the discharge settles Layer 2.
+
 **Layer 1 — applied 2026-10-25, except the sag change:**
 - [x] Raise discharge EMA alpha 0.12 → 0.25
 - [x] Add ±2% display hysteresis (full and empty always pass straight through)

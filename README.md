@@ -114,6 +114,9 @@ esptool.py --chip esp32 write_flash 0x0 CYD-Crypto-Tracker-2usb.bin
 - `pages.txt` — optional page layout (see above)
 - `apikey.txt` — optional CoinGecko API key (single line, avoids anonymous rate limits)
 - `cache/btc.bin` — auto-generated price cache (binary; older `btc.json` is ignored)
+- `batt.csv` — auto-generated battery log, one line a minute (rotates to `batt.old.csv` at
+  64 KB). Columns: `epoch,uptime_s,pin_mv,cell_raw_v,cell_v,pct,wifi`. Exists so a discharge
+  that happens away from a USB cable can still be read afterwards.
 
 ## Serial Commands
 

@@ -10,3 +10,4 @@ void brightnessRestore();       // re-apply current level (used after invert off
 void brightnessOff();           // zero PWM (used by sleep timer)
 void batteryPctSample();        // read the ADC and update the cached value — ~50 ms, call on a slow tick
 int  batteryPct();              // cached 0-100 if LiPo detected on GPIO34 (100k/100k divider), else -1
+void batteryLogTick();          // once a minute: append a line to /batt.csv (self-throttled)

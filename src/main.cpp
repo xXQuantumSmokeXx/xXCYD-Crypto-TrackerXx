@@ -671,6 +671,7 @@ void loop() {
         lastBatt = millis();
         batteryPctSample();
     }
+    batteryLogTick();   // self-throttled to one line a minute
 
     // Periodic crypto refresh — every 60 seconds if WiFi is up
     static unsigned long lastCryptoFetch = 0;
