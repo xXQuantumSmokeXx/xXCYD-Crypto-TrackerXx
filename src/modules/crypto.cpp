@@ -549,28 +549,58 @@ static bool requestCoins(const char **ids, int count, bool withSparkline) {
         "&sparkline=%s&price_change_percentage=7d",
         idsStr, withSparkline ? "true" : "false");
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
-    http.begin(client, url);
-    http.setTimeout(15000);
-    http.addHeader("Accept", "application/json");
-    if (s_apiKey[0]) http.addHeader("x-cg-demo-api-key", s_apiKey);
-#ifdef COINGECKO_API_KEY
-    else http.addHeader("x-cg-demo-api-key", COINGECKO_API_KEY);
-#endif
-    int code = http.GET();
-    if (code != 200) { http.end(); return false; }
+    // Two attempts at most: if CoinGecko refuses the key, drop it and ask again anonymously
+    // (2026-10-25 - a LiveCoinWatch key in apikey.txt got 401 on every request, and with no
+    // SD cache the screen sat on "Loading data..."). A bad key must not take the screen down
+    // with it. Once cleared it stays cleared for the session, so the sparkline batches that
+    // follow do not repeat the rejection.
+    int    code = 0;
+    String json;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        bool usedKey = (s_apiKey[0] != '\0');
 
-    // getString(), NOT getStream(). CoinGecko answers "Transfer-Encoding: chunked" with no
-    // Content-Length (checked against the live API on 2026-10-25), and the chunk framing is
-    // stripped only inside HTTPClient's own body readers - getStream() hands back the raw
-    // socket, so parsing it would feed chunk-size lines to the JSON parser. The copy this
-    // costs is repaid by the filter below, which keeps the document to the nine fields the
-    // UI reads instead of every field CoinGecko sends.
-    String json = http.getString();
-    http.end();
-    if (json.length() == 0) return false;
+        WiFiClientSecure client;
+        client.setInsecure();
+        HTTPClient http;
+        http.begin(client, url);
+        http.setTimeout(15000);
+        http.addHeader("Accept", "application/json");
+        if (usedKey) http.addHeader("x-cg-demo-api-key", s_apiKey);
+#ifdef COINGECKO_API_KEY
+        else http.addHeader("x-cg-demo-api-key", COINGECKO_API_KEY);
+#endif
+        code = http.GET();
+
+        if (code == 200) {
+            // getString(), NOT getStream(). CoinGecko answers "Transfer-Encoding: chunked"
+            // with no Content-Length (checked against the live API on 2026-10-25), and the
+            // chunk framing is stripped only inside HTTPClient's own body readers -
+            // getStream() hands back the raw socket, so parsing it would feed chunk-size
+            // lines to the JSON parser. The copy this costs is repaid by the filter below,
+            // which keeps the document to the nine fields the UI reads instead of every
+            // field CoinGecko sends.
+            json = http.getString();
+            http.end();
+            break;
+        }
+        http.end();
+
+        if ((code == 401 || code == 403) && usedKey) {
+            Serial.printf("CoinGecko rejected the API key (%d) - check apikey.txt; "
+                          "retrying anonymously\n", code);
+            s_apiKey[0] = '\0';
+            continue;
+        }
+        break;
+    }
+    if (code != 200) {
+        Serial.printf("coins/markets HTTP %d (%d ids)\n", code, count);
+        return false;
+    }
+    if (json.length() == 0) {
+        Serial.println("coins/markets: empty body");
+        return false;
+    }
 
     JsonDocument filter;
     buildCoinFilter(filter);
@@ -829,6 +859,12 @@ void cryptoInit() {
                 if (key.length() > 0) {
                     strlcpy(s_apiKey, key.c_str(), sizeof(s_apiKey));
                     Serial.println("CoinGecko API key loaded from SD");
+                    // Every CoinGecko key, demo or pro, starts with "CG-". Anything else is
+                    // almost certainly a key for another service; say so at boot instead of
+                    // letting it surface as a 401 on every request (2026-10-25).
+                    if (strncmp(s_apiKey, "CG-", 3) != 0)
+                        Serial.println("apikey.txt: not a CoinGecko key (expected CG-...); "
+                                       "it will be tried once, then dropped");
                 }
                 f.close();
             }
