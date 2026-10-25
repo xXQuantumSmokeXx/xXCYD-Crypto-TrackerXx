@@ -504,12 +504,17 @@ static void applyCoinsJson(JsonArray arr) {
             s_coinCache[ci].high24h   = arr[ai]["high_24h"].as<float>();
             s_coinCache[ci].low24h    = arr[ai]["low_24h"].as<float>();
 
-            // 7d sparkline
+            // 7d sparkline - only when the response carried one. A price-only fetch leaves
+            // the previous points untouched, which is the point of splitting the two: prices
+            // move every minute, sparklines are hourly data (2026-10-25).
             JsonArray spark = arr[ai]["sparkline_in_7d"]["price"].as<JsonArray>();
-            int n = 0, sparkSize = spark.size();
-            for (int si = 0; si < sparkSize && n < SPARK_7D; si++)
-                s_coinCache[ci].spark7d[n++] = spark[si].as<float>();
-            s_coinCache[ci].spark7dCount = n;
+            int sparkSize = spark.isNull() ? 0 : (int)spark.size();
+            if (sparkSize > 0) {
+                int n = 0;
+                for (int si = 0; si < sparkSize && n < SPARK_7D; si++)
+                    s_coinCache[ci].spark7d[n++] = spark[si].as<float>();
+                s_coinCache[ci].spark7dCount = n;
+            }
             s_coinCache[ci].valid = true;
             break;
         }
@@ -526,7 +531,7 @@ static void applyCoinsJson(JsonArray arr) {
 }
 
 // ── Network fetch: coins/markets ──────────────────────────────────────────
-static bool fetchCoins() {
+static bool fetchCoins(bool withSparkline) {
     const char *ids[COIN_MAX];
     const int count = cryptoCollectActiveIds(ids, COIN_MAX);
     if (count == 0) return false;
@@ -555,8 +560,8 @@ static bool fetchCoins() {
     snprintf(url, sizeof(url),
         "https://api.coingecko.com/api/v3/coins/markets"
         "?vs_currency=usd&ids=%s&order=market_cap_desc"
-        "&sparkline=true&price_change_percentage=7d",
-        idsStr);
+        "&sparkline=%s&price_change_percentage=7d",
+        idsStr, withSparkline ? "true" : "false");
 
     WiFiClientSecure client;
     client.setInsecure();
@@ -602,6 +607,7 @@ static bool fetchCoins() {
         DataLock lock;
         applyCoinsJson(coins);
     }
+    if (withSparkline) nvsPutInt("spark_fetched_at", (int)time(nullptr));
     saveCacheToSD();
     s_fromCache = false;
     return true;
@@ -629,11 +635,27 @@ static void fetchFearGreed() {
 }
 
 // ── Main fetch entry point ────────────────────────────────────────────────
+// Sparklines are hourly data on an endpoint whose prices move every minute. Fetching them
+// with every refresh made 79% of the payload - 80,831 bytes against 17,035 for 20 coins,
+// measured 2026-10-25 - and the largest heap allocation in the app. They are fetched when
+// stale, or when any assigned coin has none (a newly added coin, or an older cache).
+static bool needSparklineRefresh() {
+    int sparkAt = nvsGetInt("spark_fetched_at", 0);
+    if (sparkAt == 0) return true;
+    time_t now = time(nullptr);
+    if (now > 1000000 && (now - sparkAt) > SPARK_TTL_SEC) return true;
+
+    DataLock lock;
+    for (int i = 0; i < s_coinCount; i++)
+        if (s_coinCache[i].spark7dCount == 0) return true;
+    return false;
+}
+
 bool cryptoFetch() {
     s_fromCache = false;
 
     if (WiFi.isConnected()) {
-        if (fetchCoins()) {
+        if (fetchCoins(needSparklineRefresh())) {
             fetchFearGreed();
             return true;
         }

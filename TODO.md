@@ -6,9 +6,8 @@
       Still open: sag compensation (needs a quiet-radio sample, i.e. Layer 3, not a bigger
       constant), the sharper curve (Layer 2), and whether both 1-USB boards genuinely sit
       that low or their divider constant differs — compare a resting cell against a meter.
-- [ ] **Sparkline split** — 79% of every fetch is sparkline data (80,831 bytes with it,
-      17,035 without, 20 coins, measured 2026-10-25). Prices every minute, sparklines hourly,
-      merged into the same records; do it with the chart work, which touches this path.
+- [x] **Sparkline split** (2026-10-25) — prices every minute (17,035 bytes for 20 coins),
+      sparklines hourly (80,831). See "Landed".
 - [ ] **Multi-Period Charts — re-attempt** — both blockers from July are now gone (shared
       VSPI mutex, heap-light cache), so this is a fetch + UI job again rather than a
       stability problem. The bus mutex has since passed a device check, so the stability
@@ -63,6 +62,13 @@ attempts to two, so a dead network costs a shorter splash.
 **Page layout from SD** — `/pages.txt` (`P1: BTC, AVAX, SUI, ZEC`), so the layout can be set
 without the picker, the way `wifi.txt` and `apikey.txt` already work. Applied when the file's
 hash changes: picker edits survive a reboot, editing the file re-applies on the next boot.
+
+**Sparklines split from prices** — a `/coins/markets` call with `sparkline=true` is 80,831
+bytes for 20 coins against 17,035 without (79% sparkline, measured). Sparklines are hourly
+data, so they are now fetched only when `spark_fetched_at` is over an hour old or when some
+assigned coin has none (a new coin, or an older cache); price-only refreshes leave the
+existing points untouched. The `String` and document behind a normal minute are ~64 KB
+smaller.
 
 **Finding for the chart work** — CoinGecko answers `Transfer-Encoding: chunked` with no
 `Content-Length`, and only `HTTPClient`'s own body readers strip the chunk framing.

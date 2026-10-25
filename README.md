@@ -174,6 +174,9 @@ sd_card/
 ## Changelog
 
 ### v1.1.4 (unreleased)
+- **Changed:** sparklines are fetched hourly instead of every minute. A 20-coin refresh drops
+  from ~81 KB to ~17 KB (measured); prices still update every 60 s and the existing chart
+  points are kept between sparkline fetches.
 - **Changed:** battery % settles faster (EMA alpha 0.12 → 0.25) and no longer flickers —
   a ±2% display hysteresis holds the shown value until the reading is two points away.
 - **Changed:** the battery is sampled on a 10-second tick instead of inside every status-bar

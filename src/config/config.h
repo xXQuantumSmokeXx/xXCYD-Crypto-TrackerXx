@@ -64,6 +64,7 @@
 #define COIN_MAX            (MAX_COINS_PER_PAGE * MAX_CRYPTO_PAGES)  // 20 total slots
 #define SPARK_POINTS_7D     168   // 7 days × 24h hourly
 #define SPARK_POINTS_30D    30    // 30 daily candles
+#define SPARK_TTL_SEC       3600  // sparkline refresh interval (prices refresh every 60 s)
 // No cache TTL: the SD cache is the offline answer, not a freshness gate. Refresh cadence
 // is driven by the 60-second auto-refresh in main.cpp (2026-10-25).
 
