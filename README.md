@@ -152,6 +152,24 @@ pio run -e cyd_crypto_2usb
 
 Requires PlatformIO with `espressif32@6.3.0` platform. The only build flag difference between variants is `-DCYD_USB_VERSION=1` vs `-DCYD_USB_VERSION=2`.
 
+## Releasing
+
+Bump `APP_VERSION`, write `release-notes/v<version>.md`, commit, then push a tag:
+
+```bash
+git tag -a v1.1.12 -m "v1.1.12 - …"
+git push --follow-tags
+```
+
+The `Release` workflow builds both boards with the pinned PlatformIO environment and
+publishes the release with both `.bin` files and a `SHA256SUMS.txt`, using the repository's
+own `GITHUB_TOKEN`. No personal token, no `gh` login — the tag push is the whole release.
+Notes are read from `release-notes/<tag>.md` on the default branch, so a tag never has to
+move to add them; a new tag can also be published from the Actions tab with *Run workflow*.
+
+One-time repository setting: **Settings → Actions → General → Workflow permissions →
+Read and write permissions**, or the release step cannot create the release.
+
 ## Project Structure
 
 ```

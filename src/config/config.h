@@ -68,4 +68,6 @@
 // No cache TTL: the SD cache is the offline answer, not a freshness gate. Refresh cadence
 // is driven by the 60-second auto-refresh in main.cpp (2026-10-25).
 
-#include "secrets.h"   // gitignored — copy secrets.h.example to secrets.h
+#if __has_include("secrets.h")
+#include "secrets.h"   // gitignored - copy secrets.h.example to secrets.h
+#endif

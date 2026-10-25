@@ -1,0 +1,83 @@
+name: Release
+
+# A release is a git tag push. The runner builds both boards with the pinned
+# PlatformIO environment and publishes the binaries with the repository's own
+# GITHUB_TOKEN - no personal token, no gh login, nothing outside git.
+#
+# Notes are read from release-notes/<tag>.md on the default branch, so they can
+# be committed before tagging. Missing notes fall back to GitHub's generated
+# notes.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v1.1.12)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve tag name
+        id: tag
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install --quiet platformio
+
+      - name: Build both boards
+        run: |
+          pio run -e cyd_crypto
+          pio run -e cyd_crypto_2usb
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp .pio/build/cyd_crypto/firmware.bin     out/CYD-Crypto-Tracker-1usb.bin
+          cp .pio/build/cyd_crypto_2usb/firmware.bin out/CYD-Crypto-Tracker-2usb.bin
+          cd out && sha256sum *.bin > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          # Notes come from the default branch, so the tagged tree does not have
+          # to carry them (and a tag does not have to move to add them).
+          git fetch --quiet origin master
+          notes=/tmp/notes.md
+          if git show "origin/master:release-notes/${TAG}.md" > "$notes" 2>/dev/null; then
+            echo "notes: release-notes/${TAG}.md"
+          else
+            : > "$notes"
+            echo "notes: none - using generated notes"
+          fi
+
+          if [ -s "$notes" ]; then
+            NOTES=(--notes-file "$notes")
+          else
+            NOTES=(--generate-notes)
+          fi
+
+          gh release create "$TAG" \
+            out/CYD-Crypto-Tracker-1usb.bin \
+            out/CYD-Crypto-Tracker-2usb.bin \
+            out/SHA256SUMS.txt \
+            --title "$TAG" \
+            --verify-tag \
+            "${NOTES[@]}"
