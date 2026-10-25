@@ -403,10 +403,14 @@ static bool saveCacheToSD() {
 }
 
 static bool loadCacheFromSD() {
+    // No age limit (2026-10-25). The cache answers "what were the prices when we last heard
+    // from the network", and an hour-old answer beats a blank screen. The stored time is
+    // carried to the status bar, which marks the data CACHED - the age is visible, not
+    // hidden. Before this, the cache refused anything older than CACHE_TTL_SEC, and
+    // cryptoFetch(force) zeroed the stamp before even trying the network; between them an
+    // offline CYD showed nothing at all five minutes after the last successful fetch.
     int cachedAt = nvsGetInt("btc_cached_at", 0);
     if (cachedAt == 0) return false;
-    time_t now = time(nullptr);
-    if (now > 1000000 && (now - cachedAt) > CACHE_TTL_SEC) return false;
 
     SdSession sd;
     if (!sd.ok()) return false;
@@ -591,8 +595,7 @@ static void fetchFearGreed() {
 }
 
 // ── Main fetch entry point ────────────────────────────────────────────────
-bool cryptoFetch(bool force) {
-    if (force) nvsPutInt("btc_cached_at", 0);
+bool cryptoFetch() {
     s_fromCache = false;
 
     if (WiFi.isConnected()) {

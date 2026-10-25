@@ -28,7 +28,7 @@ Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D sparkli
 **Live Data:**
 - CoinGecko API integration — fetches prices, 24H/7D changes, high/low, and 7-day sparkline data
 - Fear & Greed Index displayed in status bar
-- SD card caching with configurable TTL — survives reboots offline
+- SD card cache of the last successful fetch, used whenever the network is unavailable — survives reboots and long outages (marked `CACHED` with its timestamp)
 - Background fetch every 60 seconds via FreeRTOS worker on Core 0
 - Retry logic on boot — splash screen holds until data loads (up to 4 attempts)
 - LIVE / CACHED indicator with last sync timestamp
@@ -173,7 +173,15 @@ sd_card/
 
 ## Changelog
 
-### v1.1.2 (unreleased)
+### v1.1.3 (unreleased)
+- **Fixed:** the SD cache is actually usable offline. It refused anything older than five
+  minutes, and any failed forced fetch (startup retries, the `F` key) zeroed the cache
+  stamp — so an offline device showed nothing at all. A failed fetch now falls through to
+  the cache at any age, marked `CACHED` with its timestamp.
+- **Changed:** startup tries two fetches instead of four, so a dead network costs a much
+  shorter splash before cached prices appear.
+
+### v1.1.2
 - **New:** `V` serial command prints the firmware version, and the same line is logged at
   boot — after a reflash, "which build is this?" no longer needs a commit hash.
 

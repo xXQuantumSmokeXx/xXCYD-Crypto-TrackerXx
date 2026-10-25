@@ -26,6 +26,14 @@ corrupt old files. The old `/cache/btc.json` is ignored, not migrated.
 (CoinGecko sends 28). Parse failures now return false so the cache is used, and an empty
 result is never written over a good cache.
 
+**Offline cache actually works** — it did not. `cryptoFetch(force)` zeroed `btc_cached_at`
+before trying the network, so a failed forced fetch (startup's retries, the `F` key)
+invalidated the cache it would have fallen back to; and the cache refused anything older
+than a 5-minute TTL. Between them, an offline CYD showed nothing. The TTL and the `force`
+flag are gone: the network is always attempted when connected, and a failure falls through
+to the cache at any age, labelled `CACHED` with its timestamp. Startup also drops from four
+attempts to two, so a dead network costs a shorter splash.
+
 **Page layout from SD** — `/pages.txt` (`P1: BTC, AVAX, SUI, ZEC`), so the layout can be set
 without the picker, the way `wifi.txt` and `apikey.txt` already work. Applied when the file's
 hash changes: picker edits survive a reboot, editing the file re-applies on the next boot.

@@ -59,9 +59,11 @@ int  cryptoGetNextEnabledPage(int current);                // next enabled page 
 int  cryptoGetPrevEnabledPage(int current);                // previous enabled page (wraps), or -1
 
 // ── API fetch ────────────────────────────────────────────────────────────
-// Fetch all coins across all active pages in one API call. Returns success.
-// If no WiFi, loads from SD cache. Fills CoinData arrays.
-bool cryptoFetch(bool force = false);
+// Fetch all coins across all active pages in one API call. Returns true when the screen
+// has data afterwards - live, or from the SD cache if the network is unavailable. There is
+// deliberately no "force": the network is always attempted when connected, and a failed
+// attempt falls through to the cache rather than invalidating it.
+bool cryptoFetch();
 // ── Fear & Greed ─────────────────────────────────────────────────────────
 int  cryptoGetFearGreed();          // 0-100, -1 if unknown
 void cryptoGetFearGreedLabel(char *buf, size_t len);

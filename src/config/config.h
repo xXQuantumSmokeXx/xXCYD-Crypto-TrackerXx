@@ -58,12 +58,13 @@
 // ── App settings ─────────────────────────────────────────────────────────
 // Printed at boot and by the V serial command. Bump on every release: after a reflash,
 // "which build is this?" should be answerable without hunting for a commit hash.
-#define APP_VERSION         "v1.1.2"
+#define APP_VERSION         "v1.1.3"
 #define MAX_COINS_PER_PAGE  4
 #define MAX_CRYPTO_PAGES    5
 #define COIN_MAX            (MAX_COINS_PER_PAGE * MAX_CRYPTO_PAGES)  // 20 total slots
 #define SPARK_POINTS_7D     168   // 7 days × 24h hourly
 #define SPARK_POINTS_30D    30    // 30 daily candles
-#define CACHE_TTL_SEC       300   // 5 minutes
+// No cache TTL: the SD cache is the offline answer, not a freshness gate. Refresh cadence
+// is driven by the 60-second auto-refresh in main.cpp (2026-10-25).
 
 #include "secrets.h"   // gitignored — copy secrets.h.example to secrets.h

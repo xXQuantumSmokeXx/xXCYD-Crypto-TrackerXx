@@ -73,7 +73,7 @@ static void fetchWorker(void *param) {
 
         switch (cmd) {
             case FETCH_CRYPTO: {
-                cryptoFetch(false);
+                cryptoFetch();
                 xSemaphoreTake(s_dataMutex, portMAX_DELAY);
                 s_fetchDone = true;
                 xSemaphoreGive(s_dataMutex);
@@ -601,23 +601,20 @@ void setup() {
         timeSyncInitTZ(tz);   // NVS-backed timezone, default US Eastern
         for (int i = 0; i < 30 && !timeIsValid(); i++) delay(100);
 
-        // Retry fetch until we have live data (CoinGecko can be slow / rate-limited)
+        // Two attempts, not four (2026-10-25). Each attempt can sit on the HTTP timeout,
+        // and a boot that waits a minute on a dead network is worse than showing cached
+        // prices - which cryptoFetch() already falls back to by itself. So "no data" here
+        // now means no network AND no cache, and the 60-second auto-refresh takes over
+        // once the device is up.
         bool gotData = false;
-        for (int attempt = 0; attempt < 4; attempt++) {
-            char msg[32];
-            snprintf(msg, sizeof(msg), "Fetching crypto %d/4...", attempt + 1);
-            showSplash(msg);
-            if (cryptoFetch(true)) { gotData = true; break; }
-            if (attempt < 3) delay(2000);
-        }
-        if (!gotData) {
-            // Last resort: try SD cache
-            showSplash("Trying SD cache...");
-            cryptoFetch(false);
+        for (int attempt = 0; attempt < 2 && !gotData; attempt++) {
+            showSplash(attempt == 0 ? "Fetching crypto..." : "Retrying...");
+            gotData = cryptoFetch();
+            if (!gotData) delay(1000);
         }
     } else {
-        // Try loading from cache
-        cryptoFetch(false);
+        // No WiFi: cryptoFetch() goes straight to the cache
+        cryptoFetch();
     }
 
     // Launch async fetch worker on Core 0
@@ -860,11 +857,10 @@ void loop() {
             redraw();
         }
         if (cmd == 'F' || cmd == 'f') {
-            // Force refresh
-            if (s_wifiOk && !workerBusy()) {
-                nvsPutInt("btc_cached_at", 0);
-                triggerFetch();
-            }
+            // Refresh now. This used to zero btc_cached_at first, which meant a refresh
+            // that failed (no network) also destroyed the cache it would have fallen back
+            // to - so pressing F while offline blanked the screen.
+            if (s_wifiOk && !workerBusy()) triggerFetch();
         }
         if (cmd == 'S' || cmd == 's') {
             // Screenshot capture → RGB332 framebuffer over serial
