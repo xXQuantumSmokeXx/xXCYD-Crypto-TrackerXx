@@ -5,7 +5,6 @@
 #include <XPT2046_Touchscreen.h>
 #include <SPI.h>
 
-static SPIClass            g_touchSPI(VSPI);
 static XPT2046_Touchscreen g_ts(TOUCH_CS);
 
 static int s_touchRotation = 2;   // 0-3, NVS-backed; default rotates 2 (180°)
@@ -41,12 +40,14 @@ static bool rawToScreen(int16_t *sx, int16_t *sy) {
     return true;
 }
 
-// Every SdSession calls this on its way out: mounting the card left VSPI muxed to the SD
-// pins, and the touch driver's SPIClass has no way to know. Re-begin it before the next
-// read. Safe to call at any time - the bus mutex is held by the caller.
+// Registered with the bus module and called on every SdSession exit: end() detaches the SD
+// pins that session attached, begin() re-attaches the touch set. Same SPIClass instance as
+// the SD, because SPIClass::begin() no-ops once the bus is started - a second instance could
+// re-mux the pins but never hand them back (2026-10-25).
 static void touchBusReinit() {
-    g_touchSPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
-    g_ts.begin(g_touchSPI);
+    g_vspiBus.end();
+    g_vspiBus.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+    g_ts.begin(g_vspiBus);
 #if CYD_USB_VERSION == 2
     g_ts.setRotation(s_touchRotation);
 #else
@@ -55,8 +56,9 @@ static void touchBusReinit() {
 }
 
 void touchInit() {
-    g_touchSPI.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
-    g_ts.begin(g_touchSPI);
+    g_vspiBus.end();
+    g_vspiBus.begin(TOUCH_SCLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
+    g_ts.begin(g_vspiBus);
 #if CYD_USB_VERSION == 2
     int rot = nvsGetInt("touch_rot", -1);
     if (rot < 0) {
