@@ -3,8 +3,34 @@
 ## NEXT_RELEASE (v1.2.0)
 
 - [ ] **Battery % — Layer 1 fix** (alpha 0.12→0.25, sag 30→100mV, ±2% hysteresis)
-- [ ] **Multi-Period Charts — re-attempt** (async worker, streaming parser, SD mutex)
+- [ ] **Multi-Period Charts — re-attempt** — both blockers from July are now gone (shared
+      VSPI mutex, heap-light cache), so this is a fetch + UI job again rather than a
+      stability problem. Still needs a device pass on the mutex first.
+- [x] **Shared VSPI bus mutex + heap-light cache** (2026-10-25) — see "Landed" below
 - [ ] **TBD**
+
+## Landed (2026-10-25)
+
+**Shared VSPI bus** — `src/config/spi_bus.h`. The SD card and the touch controller are both
+on VSPI, and `SD.begin()` re-muxes the bus to the SD pins; the touch driver's `SPIClass`
+has no way to know, so a touch read during an SD session returns garbage. One mutex now
+covers every SD session and every touch read, and because `SD.end()` leaves the bus on the
+SD pins, each session re-inits touch on the way out (`SdSession` → `spiBusRestore()`).
+
+**Cache is binary** — 776-byte `CoinData` records instead of raw JSON. ~79 KB of JSON per
+fetch (measured against the live API) becomes 15.5 KB; reading it back needs no parser and
+no `String`. A `static_assert` pins the record size, so a struct change cannot silently
+corrupt old files. The old `/cache/btc.json` is ignored, not migrated.
+
+**Filtered parse** — the `/coins/markets` document keeps the nine fields the UI reads
+(CoinGecko sends 28). Parse failures now return false so the cache is used, and an empty
+result is never written over a good cache.
+
+**Finding for the chart work** — CoinGecko answers `Transfer-Encoding: chunked` with no
+`Content-Length`, and only `HTTPClient`'s own body readers strip the chunk framing.
+`http.getStream()` hands back the raw socket, so a stream parser would be fed chunk-size
+lines. Anything that parses incrementally has to de-chunk itself or go through
+`getString()`.
 
 ## Multi-Period Charts (24H / 7D / 1M / 3M / 6M / 1Y / ALL)
 
@@ -26,9 +52,9 @@ Tap-to-cycle through chart periods on single-coin view and detail screen.
 - **Core 0 worker approach** — moved HTTP to the existing fetch worker task (Core 0, WDT-unsubscribed). Still experienced instability, likely from SPI bus contention between the SD card (VSPI) and touch controller (VSPI remapped) when accessed from different cores simultaneously.
 
 **Lessons for next attempt:**
-1. **Streaming JSON parser** — parse `/market_chart` response incrementally (character-by-character) rather than buffering the full string + building a DOM. Already prototyped; the manual `strstr`/`strchr` scanner works but could be hardened against API format changes.
+1. **Streaming JSON parser** — parse `/market_chart` response incrementally (character-by-character) rather than buffering the full string + building a DOM. Already prototyped; the manual `strstr`/`strchr` scanner works but could be hardened against API format changes. **Caveat added 2026-10-25:** the response is `Transfer-Encoding: chunked`, and the framing is only stripped inside `HTTPClient`'s body readers — `getStream()` is the raw socket. An incremental parser must de-chunk first, or read from `getString()` and accept the copy. A scanner fed chunk sizes would fail on every fetch while looking like bad data.
 2. **Fully async from the start** — no synchronous HTTP anywhere in the UI thread. Queue chart requests via a lock-free ring buffer; worker processes them one at a time; completion flag triggers redraw.
-3. **SD card mutex** — if the worker (Core 0) accesses the SD card while the main loop (Core 1) is using the touch controller on the same SPI bus, add a semaphore around VSPI transactions. The `SD.begin()`/`SD.end()` pattern in the existing codebase may already handle this, but the chart fetches increase SD access frequency dramatically.
+3. **SD card mutex — DONE 2026-10-25** (`src/config/spi_bus.h`). The old note guessed that the `SD.begin()`/`SD.end()` pattern might already handle this; it does not. `SD.begin()` re-muxes VSPI to the SD pins, so the real bug was never interleaving but the bus being left pointed at the wrong device afterwards — a mutex alone would not have fixed it. One mutex now covers both, and every SD session re-inits touch before releasing. Chart work can lean on it.
 4. **Pre-warm the cache** — when the user enters a 1-coin or detail view, pre-fetch the 1M and 3M periods in the background before they even tap. Those are the heavy ones (hourly data). 6M/1Y/ALL are daily data and much lighter.
 5. **Smaller pages / fewer coins** during chart viewing — the 168-point `s_activeSpark` buffer per coin is fine, but consider whether the display can show a meaningful chart with fewer points (e.g., 84) to reduce memory pressure.
 
