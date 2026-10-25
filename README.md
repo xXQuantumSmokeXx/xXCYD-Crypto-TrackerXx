@@ -173,7 +173,7 @@ sd_card/
 
 ## Changelog
 
-### v1.1.4 (unreleased)
+### v1.1.4
 - **Changed:** sparklines are fetched hourly instead of every minute. A 20-coin refresh drops
   from ~81 KB to ~17 KB (measured); prices still update every 60 s and the existing chart
   points are kept between sparkline fetches.
