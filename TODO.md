@@ -2,13 +2,17 @@
 
 ## NEXT_RELEASE (v1.2.0)
 
-- [ ] **Battery % — Layer 1 fix** (alpha 0.12→0.25, sag 30→100mV, ±2% hysteresis)
+- [ ] **Battery % — what's left** — Layer 1 shipped (alpha, hysteresis, off-draw sampling).
+      Still open: sag compensation (needs a quiet-radio sample, i.e. Layer 3, not a bigger
+      constant), the sharper curve (Layer 2), and whether both 1-USB boards genuinely sit
+      that low or their divider constant differs — compare a resting cell against a meter.
 - [ ] **Sparkline split** — 79% of every fetch is sparkline data (80,831 bytes with it,
       17,035 without, 20 coins, measured 2026-10-25). Prices every minute, sparklines hourly,
       merged into the same records; do it with the chart work, which touches this path.
 - [ ] **Multi-Period Charts — re-attempt** — both blockers from July are now gone (shared
       VSPI mutex, heap-light cache), so this is a fetch + UI job again rather than a
-      stability problem. Still needs a device pass on the mutex first.
+      stability problem. The bus mutex has since passed a device check, so the stability
+      question is closed.
 - [x] **Shared VSPI bus mutex + heap-light cache** (2026-10-25) — see "Landed" below
 - [ ] **TBD**
 
@@ -41,9 +45,12 @@ custom coin assigned to a page looked up garbage. Now resolved through `coinGetD
 fixed in the same pass as the lock because it is the same three lines.
 
 **Device check (2026-10-25)** — v1.1.3 on a 2-USB CYD: boot ~13 s, touch registers,
-`pages.txt` applied from SD, prices and sparklines accurate. Not yet exercised on hardware:
-the offline cache (WiFi off, >5 min, reboot), `F` with no network, and a custom coin on a
-page.
+`pages.txt` applied from SD, prices and sparklines accurate. v1.1.4 on a 1-USB CYD: boot
+~4 s, `pages.txt` applied, and the battery gauge held at 4% without flicker — the hysteresis
+change confirmed, though a full charge/discharge cycle is still needed to judge the EMA.
+
+Not yet exercised on hardware: the offline cache (WiFi off, >5 min, reboot), `F` with no
+network, and a custom coin on a page.
 
 **Offline cache actually works** — it did not. `cryptoFetch(force)` zeroed `btc_cached_at`
 before trying the network, so a failed forced fetch (startup's retries, the `F` key)
