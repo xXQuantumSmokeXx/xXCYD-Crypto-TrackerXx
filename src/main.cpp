@@ -244,6 +244,18 @@ static void showSplash(const char *msg) {
 }
 
 // ── WiFi ──────────────────────────────────────────────────────────────────
+static bool s_timeSyncStarted = false;
+
+// Start SNTP once. setup() used to call this only when WiFi was already up, so a boot that
+// missed the network also left the clock at 1970 for the whole session (2026-10-25).
+static void ensureTimeSync() {
+    if (s_timeSyncStarted) return;
+    char tz[32];
+    nvsGetStr("tz_string", tz, sizeof(tz), "EST5EDT");
+    timeSyncInitTZ(tz);   // NVS-backed timezone, default US Eastern
+    s_timeSyncStarted = true;
+}
+
 static void connectWifi() {
     showSplash("Connecting to WiFi...");
     char ssid[64], pass[64];
@@ -623,9 +635,7 @@ void setup() {
 
     if (s_wifiOk) {
         showSplash("Syncing time...");
-        char tz[32];
-        nvsGetStr("tz_string", tz, sizeof(tz), "EST5EDT");
-        timeSyncInitTZ(tz);   // NVS-backed timezone, default US Eastern
+        ensureTimeSync();
         for (int i = 0; i < 30 && !timeIsValid(); i++) delay(100);
 
         // Two attempts, not four (2026-10-25). Each attempt can sit on the HTTP timeout,
@@ -681,8 +691,37 @@ void loop() {
     }
     batteryLogTick();   // self-throttled to one line a minute
 
-    // Periodic crypto refresh — every 60 seconds if WiFi is up
+    // Periodic crypto refresh — every 60 seconds if WiFi is up. Declared here because the
+    // WiFi supervision below forces an immediate fetch on reconnect by resetting it.
     static unsigned long lastCryptoFetch = 0;
+
+    // ── WiFi supervision ──────────────────────────────────────────────────
+    // setup() waits 12 s for the association once and then never looks again. A slow
+    // association (seen 2026-10-25) left s_wifiOk false for the rest of the session even
+    // though the driver was still trying, so nothing was fetched and - with no cache on the
+    // card - the screen sat on "Loading data..." until a reboot. Watch the real state, nudge
+    // a stalled driver, and fetch the moment the link comes up.
+    static unsigned long lastWifiCheck = 0;
+    static unsigned long lastWifiNudge = 0;
+    if (millis() - lastWifiCheck > 10000) {
+        lastWifiCheck = millis();
+        bool up = (WiFi.status() == WL_CONNECTED);
+        if (up != s_wifiOk) {
+            s_wifiOk = up;
+            s_needsRedraw = true;               // status bar shows the state
+            Serial.println(up ? "WiFi connected" : "WiFi lost");
+            if (up) {
+                ensureTimeSync();
+                lastCryptoFetch = millis() - 60001;   // fetch on this pass, not a minute later
+            }
+        }
+        if (!up && millis() - lastWifiNudge > 30000) {
+            lastWifiNudge = millis();
+            WiFi.reconnect();                   // no-op while the driver is mid-association
+        }
+    }
+
+    // Periodic crypto refresh — every 60 seconds if WiFi is up
     if (s_wifiOk && !workerBusy() && millis() - lastCryptoFetch > 60000) {
         lastCryptoFetch = millis();
         triggerFetch();
