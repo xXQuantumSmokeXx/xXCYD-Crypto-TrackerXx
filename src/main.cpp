@@ -659,9 +659,10 @@ void loop() {
         }
         if (s_screen == SCR_DETAIL) {
             char timeStr[10]; timeGetShort(timeStr);
-            const CoinData *c = cryptoGetCoinData(s_detailCoinId);
+            CoinData coin = {};
+            bool haveCoin = cryptoCopyCoinData(s_detailCoinId, &coin);
             char title[40];
-            snprintf(title, sizeof(title), "%s", c ? c->symbol : "DETAIL");
+            snprintf(title, sizeof(title), "%s", haveCoin ? coin.symbol : "DETAIL");
             drawTopbarTime(tft, timeStr, title);
         }
         s_lastMinute = millis();

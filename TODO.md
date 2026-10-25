@@ -3,6 +3,9 @@
 ## NEXT_RELEASE (v1.2.0)
 
 - [ ] **Battery % — Layer 1 fix** (alpha 0.12→0.25, sag 30→100mV, ±2% hysteresis)
+- [ ] **Sparkline split** — 79% of every fetch is sparkline data (80,831 bytes with it,
+      17,035 without, 20 coins, measured 2026-10-25). Prices every minute, sparklines hourly,
+      merged into the same records; do it with the chart work, which touches this path.
 - [ ] **Multi-Period Charts — re-attempt** — both blockers from July are now gone (shared
       VSPI mutex, heap-light cache), so this is a fetch + UI job again rather than a
       stability problem. Still needs a device pass on the mutex first.
@@ -25,6 +28,17 @@ corrupt old files. The old `/cache/btc.json` is ignored, not migrated.
 **Filtered parse** — the `/coins/markets` document keeps the nine fields the UI reads
 (CoinGecko sends 28). Parse failures now return false so the cache is used, and an empty
 result is never written over a good cache.
+
+**Cross-core cache access** — the fetch worker (core 0) rewrote coins field by field while
+the UI (core 1) drew from them, with no lock anywhere: a torn price, a half-copied name, a
+sparkline filling mid-draw. Every access now takes one mutex, and the getter COPIES
+(`cryptoCopyCoinData`) instead of returning a pointer that outlives the lock. Reading is
+`CACHED`/`LIVE`-labelled as before.
+
+**Custom coins were reading out of bounds** — `screen_crypto` resolved the page's coin with
+`g_top50[idx].id`, but a custom coin has an index of 50-59, past the end of the array. Any
+custom coin assigned to a page looked up garbage. Now resolved through `coinGetDef`, and
+fixed in the same pass as the lock because it is the same three lines.
 
 **Offline cache actually works** — it did not. `cryptoFetch(force)` zeroed `btc_cached_at`
 before trying the network, so a failed forced fetch (startup's retries, the `F` key)

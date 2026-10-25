@@ -2,6 +2,8 @@
 #include "../config/config.h"
 #include "../config/nvs_config.h"
 #include "../config/spi_bus.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -74,6 +76,25 @@ static CoinData s_coinCache[COIN_MAX];   // runtime cache for all assigned coins
 static int      s_coinCount = 0;
 static bool     s_fromCache = false;
 static char     s_syncTime[12] = "--:--";
+
+// ── Cross-core access to the cache ────────────────────────────────────────
+// The fetch worker writes this on core 0 while the UI draws from it on core 1. A coin is
+// updated field by field - a double, five floats, 168 sparkline floats, three strlcpy's -
+// so an unlocked read can draw a torn price or a half-copied name. Every access takes this
+// mutex, and readers COPY under it (cryptoCopyCoinData): a pointer handed back from inside
+// the lock outlives the lock by definition, which is how the old getter was unsafe even
+// though it "only read" (2026-10-25).
+//
+// Lock order, where both are held: SPI bus first, then this one. Nothing takes them in the
+// other order, so the pair cannot deadlock.
+static SemaphoreHandle_t s_dataMutex = nullptr;
+
+struct DataLock {
+    DataLock()  { if (s_dataMutex) xSemaphoreTake(s_dataMutex, portMAX_DELAY); }
+    ~DataLock() { if (s_dataMutex) xSemaphoreGive(s_dataMutex); }
+    DataLock(const DataLock &) = delete;
+    DataLock &operator=(const DataLock &) = delete;
+};
 static char     s_apiKey[48] = "";       // loaded from /apikey.txt on SD
 static int      s_fgValue   = -1;
 static char     s_fgLabel[16] = "";
@@ -393,10 +414,14 @@ static bool saveCacheToSD() {
     File f = SD.open(CACHE_FILE, FILE_WRITE);
     if (!f) return false;
 
-    CacheHeader h { CACHE_MAGIC, CACHE_VERSION, (uint16_t)s_coinCount };
-    size_t want = sizeof(CoinData) * (size_t)s_coinCount;
-    bool ok = f.write((const uint8_t *)&h, sizeof(h)) == sizeof(h)
-           && f.write((const uint8_t *)s_coinCache, want) == want;
+    bool ok;
+    {
+        DataLock lock;   // the snapshot must be one set, not a mix of two fetches
+        CacheHeader h { CACHE_MAGIC, CACHE_VERSION, (uint16_t)s_coinCount };
+        size_t want = sizeof(CoinData) * (size_t)s_coinCount;
+        ok = f.write((const uint8_t *)&h, sizeof(h)) == sizeof(h)
+          && f.write((const uint8_t *)s_coinCache, want) == want;
+    }
     f.close();
     if (ok) nvsPutInt("btc_cached_at", (int)time(nullptr));
     return ok;
@@ -423,6 +448,7 @@ static bool loadCacheFromSD() {
            && h.magic == CACHE_MAGIC && h.version == CACHE_VERSION && h.count <= COIN_MAX;
     if (ok) {
         size_t want = sizeof(CoinData) * (size_t)h.count;
+        DataLock lock;
         ok = f.read((uint8_t *)s_coinCache, want) == want;
         if (ok) {
             s_coinCount = h.count;
@@ -502,21 +528,25 @@ static void applyCoinsJson(JsonArray arr) {
 // ── Network fetch: coins/markets ──────────────────────────────────────────
 static bool fetchCoins() {
     const char *ids[COIN_MAX];
-    s_coinCount = cryptoCollectActiveIds(ids, COIN_MAX);
-    if (s_coinCount == 0) return false;
+    const int count = cryptoCollectActiveIds(ids, COIN_MAX);
+    if (count == 0) return false;
 
-    // Build coin cache entries
-    for (int i = 0; i < s_coinCount; i++) {
-        bool isNew = (strcmp(s_coinCache[i].id, ids[i]) != 0);
-        strlcpy(s_coinCache[i].id, ids[i], sizeof(s_coinCache[i].id));
-        if (isNew) {
-            s_coinCache[i].valid = false;
-            s_coinCache[i].spark7dCount = 0;
+    // Publish the new set, and mark any changed coin not-yet-valid, under the lock.
+    {
+        DataLock lock;
+        s_coinCount = count;
+        for (int i = 0; i < count; i++) {
+            bool isNew = (strcmp(s_coinCache[i].id, ids[i]) != 0);
+            strlcpy(s_coinCache[i].id, ids[i], sizeof(s_coinCache[i].id));
+            if (isNew) {
+                s_coinCache[i].valid = false;
+                s_coinCache[i].spark7dCount = 0;
+            }
         }
     }
 
     char idsStr[384] = "";
-    for (int i = 0; i < s_coinCount; i++) {
+    for (int i = 0; i < count; i++) {
         if (i > 0) strlcat(idsStr, ",", sizeof(idsStr));
         strlcat(idsStr, ids[i], sizeof(idsStr));
     }
@@ -568,7 +598,10 @@ static bool fetchCoins() {
         Serial.println("coins/markets returned no usable coins");
         return false;
     }
-    applyCoinsJson(coins);
+    {
+        DataLock lock;
+        applyCoinsJson(coins);
+    }
     saveCacheToSD();
     s_fromCache = false;
     return true;
@@ -588,8 +621,9 @@ static void fetchFearGreed() {
     if (deserializeJson(doc, json)) return;
     int val = doc["data"][0]["value"].as<int>();
     if (val < 0 || val > 100) return;
-    s_fgValue = val;
     const char *cls = doc["data"][0]["value_classification"] | "";
+    DataLock lock;
+    s_fgValue = val;
     strlcpy(s_fgLabel, cls, sizeof(s_fgLabel));
     for (char *p = s_fgLabel; *p; p++) *p = toupper((unsigned char)*p);
 }
@@ -614,20 +648,27 @@ bool cryptoFetch() {
 }
 
 // ── Getters ───────────────────────────────────────────────────────────────
-const CoinData* cryptoGetCoinData(const char *coinId) {
-    for (int i = 0; i < s_coinCount; i++)
-        if (strcmp(s_coinCache[i].id, coinId) == 0 && s_coinCache[i].valid)
-            return &s_coinCache[i];
-    return nullptr;
+bool cryptoCopyCoinData(const char *coinId, CoinData *out) {
+    if (!coinId || !out) return false;
+    DataLock lock;
+    for (int i = 0; i < s_coinCount; i++) {
+        if (strcmp(s_coinCache[i].id, coinId) == 0 && s_coinCache[i].valid) {
+            memcpy(out, &s_coinCache[i], sizeof(CoinData));
+            return true;
+        }
+    }
+    return false;
 }
 
 bool cryptoIsFromCache()  { return s_fromCache; }
 void cryptoGetSyncTime(char *buf, size_t len) {
+    DataLock lock;
     strlcpy(buf, s_syncTime, len);
 }
 
 int  cryptoGetFearGreed() { return s_fgValue; }
 void cryptoGetFearGreedLabel(char *buf, size_t len) {
+    DataLock lock;
     strlcpy(buf, s_fgLabel, len);
 }
 
@@ -690,6 +731,9 @@ void cryptoLoadCustomCoins() {
 #define CRYPTO_CFG_VERSION 2  // bump to force NVS wipe on schema changes
 
 void cryptoInit() {
+    // Created before anything can read the cache; the fetch worker starts later in setup().
+    if (!s_dataMutex) s_dataMutex = xSemaphoreCreateMutex();
+
     // ── NVS migration: wipe stale data if config version changed ────────────
     int32_t storedVer = nvsGetInt("cfg_ver", -1);
     if (storedVer != CRYPTO_CFG_VERSION) {

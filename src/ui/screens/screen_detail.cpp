@@ -82,7 +82,9 @@ void screenDetailDraw(TFT_eSPI &tft, bool wifiOk, const char *coinId) {
 
     char timeStr[10]; timeGetShort(timeStr);
 
-    const CoinData *c = cryptoGetCoinData(coinId);
+    CoinData coin = {};   // snapshot: the fetch worker may be rewriting it on the other core
+    bool haveCoin = cryptoCopyCoinData(coinId, &coin);
+    const CoinData *c = haveCoin ? &coin : nullptr;
     if (!c || !c->valid) {
         drawTopbar(tft, "< BACK", "DETAIL", timeStr, wifiOk);
         tft.fillRect(0, CONTENT_Y, SCREEN_W, CONTENT_H, COL_BG);

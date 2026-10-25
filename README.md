@@ -174,6 +174,10 @@ sd_card/
 ## Changelog
 
 ### v1.1.3 (unreleased)
+- **Fixed:** the UI could draw a coin while the fetch worker was rewriting it on the other
+  core — a torn price or a half-copied name. Reads now copy the coin under a lock.
+- **Fixed:** a custom coin assigned to a page was looked up with an out-of-bounds index
+  (`g_top50[idx]` with `idx >= 50`), so it showed the wrong data or none.
 - **Fixed:** the SD cache is actually usable offline. It refused anything older than five
   minutes, and any failed forced fetch (startup retries, the `F` key) zeroed the cache
   stamp — so an offline device showed nothing at all. A failed fetch now falls through to

@@ -359,16 +359,21 @@ void screenCryptoDraw(TFT_eSPI &tft, bool wifiOk, int page) {
         return;
     }
 
-    // Collect valid coin data pointers
+    // Collect valid coin data. Two fixes here (2026-10-25): the data is COPIED out under the
+    // cross-core lock rather than pointed at (the fetch worker rewrites coins on core 0
+    // while this draws on core 1), and the coin is resolved through coinGetDef instead of
+    // g_top50[idx] - a custom coin has an index of 50+, which read past the end of g_top50.
+    // File scope, not stack: four CoinData are 3.1 KB and the UI task stack is 8 KB.
+    static CoinData coinBuf[MAX_COINS_PER_PAGE];
     const CoinData *loadedCoins[MAX_COINS_PER_PAGE] = {};
     bool allLoaded = true;
     for (int s = 0; s < coinCount; s++) {
         int idx = cryptoPageGetCoin(page, s);
-        if (idx >= 0) {
-            loadedCoins[s] = cryptoGetCoinData(g_top50[idx].id);
-            if (!loadedCoins[s] || !loadedCoins[s]->valid) allLoaded = false;
+        const CoinDef *def = coinGetDef(idx);
+        if (def && cryptoCopyCoinData(def->id, &coinBuf[s])) {
+            loadedCoins[s] = &coinBuf[s];
         } else {
-            // Slot counted as active but no coin assigned — NVS may be stale
+            // Slot counted as active but no coin assigned, or no data for it yet
             allLoaded = false;
         }
     }

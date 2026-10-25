@@ -69,7 +69,10 @@ int  cryptoGetFearGreed();          // 0-100, -1 if unknown
 void cryptoGetFearGreedLabel(char *buf, size_t len);
 
 // ── Getters ──────────────────────────────────────────────────────────────
-const CoinData* cryptoGetCoinData(const char *coinId);     // null if not loaded
+// Copies the coin's data out under the cross-core lock. Returns false when the coin is not
+// loaded or not yet valid. Callers get a snapshot, not a pointer into the live array: the
+// fetch worker may be rewriting a coin on the other core while the UI draws.
+bool cryptoCopyCoinData(const char *coinId, CoinData *out);
 bool cryptoIsFromCache();
 void cryptoGetSyncTime(char *buf, size_t len);             // "2:05 PM"
 
