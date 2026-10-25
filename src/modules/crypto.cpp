@@ -409,21 +409,38 @@ static void setSyncTimeFrom(time_t t) {
 
 static bool saveCacheToSD() {
     SdSession sd;
-    if (!sd.ok()) return false;
-    if (!SD.exists("/cache")) SD.mkdir("/cache");
+    if (!sd.ok()) {
+        Serial.println("cache: SD mount failed");
+        return false;
+    }
+    bool hadDir = SD.exists("/cache");
+    bool madeDir = hadDir || SD.mkdir("/cache");
+    bool fresh = !SD.exists(CACHE_FILE);
     File f = SD.open(CACHE_FILE, FILE_WRITE);
-    if (!f) return false;
+    if (!f) {
+        // Silent before v1.1.10, which is why an offline boot kept showing nothing: the file
+        // was never there to fall back to (2026-10-25).
+        Serial.printf("cache: open %s failed (dir=%d mkdir=%d)\n",
+                      CACHE_FILE, (int)hadDir, (int)madeDir);
+        return false;
+    }
 
     bool ok;
+    size_t want;
     {
         DataLock lock;   // the snapshot must be one set, not a mix of two fetches
         CacheHeader h { CACHE_MAGIC, CACHE_VERSION, (uint16_t)s_coinCount };
-        size_t want = sizeof(CoinData) * (size_t)s_coinCount;
+        want = sizeof(CoinData) * (size_t)s_coinCount;
         ok = f.write((const uint8_t *)&h, sizeof(h)) == sizeof(h)
           && f.write((const uint8_t *)s_coinCache, want) == want;
     }
     f.close();
-    if (ok) nvsPutInt("btc_cached_at", (int)time(nullptr));
+    if (ok) {
+        nvsPutInt("btc_cached_at", (int)time(nullptr));
+        if (fresh) Serial.printf("cache: created %s (%u bytes)\n", CACHE_FILE, (unsigned)want);
+    } else {
+        Serial.printf("cache: write failed (%u bytes)\n", (unsigned)want);
+    }
     return ok;
 }
 
