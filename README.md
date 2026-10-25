@@ -118,10 +118,12 @@ esptool.py --chip esp32 write_flash 0x0 CYD-Crypto-Tracker-2usb.bin
 ## Serial Commands
 
 - `0`–`5` — switch screens (0–4 = crypto pages, 5 = settings)
+- `C` — open the coin picker
 - `F` — force refresh crypto data
 - `M` — cycle display rotation (2USB)
 - `T` — cycle touch rotation (2USB)
 - `R` — ready check
+- `V` — print the firmware version
 - `S` — screenshot capture (RGB332)
 
 ## Build
@@ -170,6 +172,10 @@ sd_card/
 ```
 
 ## Changelog
+
+### v1.1.2 (unreleased)
+- **New:** `V` serial command prints the firmware version, and the same line is logged at
+  boot — after a reflash, "which build is this?" no longer needs a commit hash.
 
 ### v1.1.1
 - **New:** `pages.txt` on the SD card sets the coin layout at boot

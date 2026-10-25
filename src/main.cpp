@@ -543,6 +543,7 @@ static void touchCalibrate() {
 // ─────────────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
+    Serial.printf("CYD-Crypto-Tracker %s\n", APP_VERSION);
 
     pinMode(LED_R, OUTPUT); pinMode(LED_G, OUTPUT); pinMode(LED_B, OUTPUT);
     ledSet(false, false, false);
@@ -820,6 +821,9 @@ void loop() {
         int cmd = Serial.read();
         if (cmd == 'R' || cmd == 'r') {
             Serial.println("READY");
+        }
+        if (cmd == 'V' || cmd == 'v') {
+            Serial.printf("VERSION:%s\n", APP_VERSION);
         }
         if (cmd == 'M' || cmd == 'm') {
             int cur = 3;
