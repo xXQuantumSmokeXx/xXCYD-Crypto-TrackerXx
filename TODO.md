@@ -40,6 +40,11 @@ sparkline filling mid-draw. Every access now takes one mutex, and the getter COP
 custom coin assigned to a page looked up garbage. Now resolved through `coinGetDef`, and
 fixed in the same pass as the lock because it is the same three lines.
 
+**Device check (2026-10-25)** — v1.1.3 on a 2-USB CYD: boot ~13 s, touch registers,
+`pages.txt` applied from SD, prices and sparklines accurate. Not yet exercised on hardware:
+the offline cache (WiFi off, >5 min, reboot), `F` with no network, and a custom coin on a
+page.
+
 **Offline cache actually works** — it did not. `cryptoFetch(force)` zeroed `btc_cached_at`
 before trying the network, so a failed forced fetch (startup's retries, the `F` key)
 invalidated the cache it would have fallen back to; and the cache refused anything older
