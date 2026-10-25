@@ -240,7 +240,9 @@ void screenDetailDraw(TFT_eSPI &tft, bool wifiOk, const char *coinId) {
             chartRequest(coinId, s_graphTab);
             tft.setTextFont(FONT_MD);
             tft.setTextColor(g_themeColor, COL_BG);
-            const char *msg = "Loading chart...";
+            const char *msg = (chartStatus(coinId, s_graphTab) == CHART_FAILED)
+                              ? "Chart unavailable - retry shortly"
+                              : "Loading chart...";
             tft.setCursor(4 + (graphW - tft.textWidth(msg)) / 2, graphY + graphH / 2 - 8);
             tft.print(msg);
         }

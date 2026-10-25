@@ -204,7 +204,9 @@ static void drawOneCoin(TFT_eSPI &tft, int contentY, int contentH, const CoinDat
     } else if (s_oneCoinGraphMode >= CHART_1M && sparkH > 16) {
         tft.setTextFont(FONT_MD);
         tft.setTextColor(g_themeColor, COL_BG);
-        const char *msg = "Loading chart...";
+        const char *msg = (chartStatus(c.id, s_oneCoinGraphMode) == CHART_FAILED)
+                          ? "Chart unavailable - retry shortly"
+                          : "Loading chart...";
         tft.setCursor(4 + (sparkW - tft.textWidth(msg)) / 2, sparkY + sparkH / 2 - 8);
         tft.print(msg);
     }

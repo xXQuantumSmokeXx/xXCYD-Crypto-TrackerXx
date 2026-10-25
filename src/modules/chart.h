@@ -46,3 +46,12 @@ int chartCopyPoints(const char *coinId, int period, float *out, int maxPoints);
 // worker; without this the detail screen would sit on "Loading chart..." until something
 // else triggered a redraw.
 bool chartConsumeUpdated();
+
+// Why there is nothing to draw, so the UI can say "loading" or "failed" instead of showing
+// the same spinner forever.
+enum ChartStatus : uint8_t {
+    CHART_NONE = 0,     // not requested (or not requested yet)
+    CHART_READY,        // chartCopyPoints() will return points
+    CHART_FAILED        // the fetch failed; requests are parked for a while
+};
+int chartStatus(const char *coinId, int period);

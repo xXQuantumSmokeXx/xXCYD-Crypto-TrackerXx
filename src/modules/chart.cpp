@@ -54,6 +54,7 @@ static ChartSlot s_slots[CHART_SLOTS];
 
 static char        s_pendingCoin[32] = "";
 static uint8_t     s_pendingMask = 0;       // bit n = period CHART_1M + n
+static uint8_t     s_failedMask  = 0;       // same bits: the last fetch for that slot failed
 static uint32_t    s_coolUntil   = 0;       // ms; back off after a failed fetch
 static ChartWakeFn s_wake = nullptr;
 static volatile bool s_updated = false;     // set on publish, consumed by the UI loop
@@ -254,9 +255,11 @@ static bool fetchChart(const char *coin, int period, float *points, int &count) 
     const char *key = cryptoApiKey();
     if (key && key[0]) http.addHeader("x-cg-demo-api-key", key);
 
+    uint32_t t0 = millis();
     int code = http.GET();
     if (code != 200) {
-        Serial.printf("chart %s/%d: HTTP %d\n", coin, days, code);
+        Serial.printf("chart %s/%d: HTTP %d after %lums\n", coin, days, code,
+                      (unsigned long)(millis() - t0));
         http.end();
         return false;
     }
@@ -265,11 +268,13 @@ static bool fetchChart(const char *coin, int period, float *points, int &count) 
     bool ok = parsePrices(http.getStream(), s_raw, CHART_RAW_MAX, raw);
     http.end();
     if (!ok) {
-        Serial.printf("chart %s/%d: no prices in response\n", coin, days);
+        Serial.printf("chart %s/%d: no prices after %lums\n", coin, days,
+                      (unsigned long)(millis() - t0));
         return false;
     }
     count = downsample(s_raw, raw, points, CHART_POINTS);
-    Serial.printf("chart %s/%d: %d points -> %d\n", coin, days, raw, count);
+    Serial.printf("chart %s/%d: %d points -> %d in %lums\n", coin, days, raw, count,
+                  (unsigned long)(millis() - t0));
     return true;
 }
 
@@ -292,6 +297,7 @@ void chartRequest(const char *coinId, int period) {
         uint8_t bit = (uint8_t)(1u << (period - CHART_1M));
         if (s_pendingMask & bit) return;                        // already queued
         s_pendingMask |= bit;
+        s_failedMask  &= (uint8_t)~bit;                         // a new attempt, new odds
         wake = true;
     }
     if (wake && s_wake) s_wake();
@@ -322,8 +328,10 @@ bool chartServicePending() {
     if (!loadCache(coin, period, points, count)) {
         if (!fetchChart(coin, period, points, count)) {
             s_coolUntil = millis() + 60000;   // do not hammer a failing endpoint
+            s_failedMask |= (uint8_t)(1u << (period - CHART_1M));
             return true;                      // the request was still consumed
         }
+        s_failedMask &= (uint8_t)~(1u << (period - CHART_1M));
         saveCache(coin, period, points, count);
     }
 
@@ -343,6 +351,15 @@ bool chartConsumeUpdated() {
     if (!s_updated) return false;
     s_updated = false;
     return true;
+}
+
+int chartStatus(const char *coinId, int period) {
+    if (!coinId || period < CHART_1M || period >= CHART_PERIOD_COUNT) return CHART_NONE;
+    ChartLock lock;
+    ChartSlot &sl = s_slots[period - CHART_1M];
+    if (sl.valid && strcmp(sl.coin, coinId) == 0) return CHART_READY;
+    if (s_failedMask & (uint8_t)(1u << (period - CHART_1M))) return CHART_FAILED;
+    return CHART_NONE;
 }
 
 int chartCopyPoints(const char *coinId, int period, float *out, int maxPoints) {
