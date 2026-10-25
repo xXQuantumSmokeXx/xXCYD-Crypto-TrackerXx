@@ -1,6 +1,6 @@
 # xXCYD-Crypto-TrackerXx
 
-Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D sparkline charts, Fear & Greed index, multi-page coin layout, and intelligent power management.
+Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D/1M/3M charts, Fear & Greed index, multi-page coin layout, offline SD caching, and intelligent power management.
 
 [![Support on Patreon](https://img.shields.io/badge/Support-Patreon-orange)](https://www.patreon.com/c/xXQuantumSmokeXx)
 
@@ -18,7 +18,7 @@ Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D sparkli
 
 **Crypto Pages (1-5):**
 - Up to 5 configurable pages, each holding 1-4 coins
-- **1-coin view:** large price, 24H/7D change percentages with themed labels, HIGH/LOW values, inline sparkline graph with tap-to-switch between 24H and 7D timeframes
+- **1-coin view:** large price, 24H/7D change percentages with themed labels, HIGH/LOW values, and a full-width chart — tap to cycle 24H → 7D → 1M → 3M
 - **2-coin view:** side-by-side layout with sparklines and percentage changes
 - **3-4 coin view:** compact rows with mini sparklines
 - Comma-formatted USD prices across all layouts
@@ -26,11 +26,12 @@ Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D sparkli
 - Disabled pages auto-skipped in navigation
 
 **Live Data:**
-- CoinGecko API integration — fetches prices, 24H/7D changes, high/low, and 7-day sparkline data
+- CoinGecko API integration — fetches prices, 24H/7D changes, high/low, and the 7-day sparkline
+- 1M and 3M charts from `/coins/{id}/market_chart`, streamed rather than buffered (those responses are 74 KB and 223 KB) and cached per coin+period on SD — 1 hour for 1M, 6 hours for 3M
 - Fear & Greed Index displayed in status bar
 - SD card cache of the last successful fetch, used whenever the network is unavailable — survives reboots and long outages (marked `CACHED` with its timestamp)
 - Background fetch every 60 seconds via FreeRTOS worker on Core 0
-- Retry logic on boot — splash screen holds until data loads (up to 4 attempts)
+- Retry logic on boot — two fetch attempts, then the SD cache, so a dead network costs a short splash rather than a minute
 - LIVE / CACHED indicator with last sync timestamp
 
 **Coin Picker:**
@@ -54,7 +55,7 @@ Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D sparkli
 - Status bar with data source, Fear & Greed, and LIVE/CACHED indicator
 - Abstract faceted crypto-core splash logo
 - Touch calibration with rotation cycling (2USB)
-- Display orientation auto-detection (2USB MADCTL)
+- Display rotation for the 2USB boards (MADCTL), persisted to NVS
 
 **Screenshot Capture:**
 - Serial screenshot via RGB332 protocol — send `S` at 115200 baud
@@ -100,13 +101,23 @@ pages are reported on serial and skipped; a file with nothing usable in it chang
 | **ESP32-32E** (1-USB) | `CYD-Crypto-Tracker-1usb.bin` |
 | **2USB** (all variants) | `CYD-Crypto-Tracker-2usb.bin` |
 
-**Direct flash:**
+These are **application images**, not merged flash images — they hold the app only, with no
+bootloader and no partition table. Where they go depends on the partition table already on the
+board, so "flash at 0x0" is not valid for them.
+
+**Via M5Launcher (recommended):** copy the `.bin` file onto a micro SD card (FAT32), insert it
+into your CYD, launch [M5Launcher](https://github.com/bmorcelli/M5Launcher), select the
+firmware, and flash. The launcher writes to an app slot for you.
+
+**Via esptool:** write to the application partition of *your* table. On the default ESP32
+layout that offset is `0x10000`:
+
 ```bash
-esptool.py --chip esp32 write_flash 0x0 CYD-Crypto-Tracker-1usb.bin
-esptool.py --chip esp32 write_flash 0x0 CYD-Crypto-Tracker-2usb.bin
+esptool.py --chip esp32 --port COM10 write_flash 0x10000 CYD-Crypto-Tracker-2usb.bin
 ```
 
-**Via M5Launcher:** copy the `.bin` file onto a micro SD card (FAT32), insert into your CYD, launch [M5Launcher](https://github.com/bmorcelli/M5Launcher), select the firmware, and flash.
+On a board running a launcher with its own partition table (M5Launcher's slots sit at
+`0x10000`, `0x180000` and `0x2D0000`), use the offset of the slot you mean to replace.
 
 **SD card files (place on root):**
 - `wifi.txt` — WiFi credentials: line 1 = SSID, line 2 = password
@@ -156,6 +167,7 @@ src/
     time_sync.h/.cpp             — NTP time sync
     brightness.h/.cpp            — LDR auto-brightness, battery %
     crypto.h/.cpp                — CoinGecko API, Fear & Greed, data model
+    chart.h/.cpp                 — 1M/3M market_chart: stream parser, per-period cache, prefetch
   ui/
     theme.h                      — colors, fonts, invert mode
     theme_color.h/.cpp           — runtime theme switching (9 colors)
