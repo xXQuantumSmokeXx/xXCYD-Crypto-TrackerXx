@@ -1,6 +1,0 @@
-bitcoin
-ethereum
-solana
-chainlink
-dogecoin
-litecoin

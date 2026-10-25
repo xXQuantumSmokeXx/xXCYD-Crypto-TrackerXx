@@ -145,6 +145,7 @@ src/
     config.h                     — pins, geometry, constants
     secrets.h                    — API keys (gitignored)
     nvs_config.h/.cpp            — Preferences/NVS wrapper
+    spi_bus.h/.cpp               — shared VSPI mutex, SD session + touch re-init
   modules/
     wifi_config.h/.cpp           — SD-based WiFi bootstrapping
     time_sync.h/.cpp             — NTP time sync
@@ -165,7 +166,27 @@ screenshot.py                    — PC-side screenshot capture script
 sd_card/
     wifi.txt                     — example WiFi config
     custom_coins.txt             — example custom coins
+    pages.txt                    — example page layout
 ```
+
+## Changelog
+
+### v1.1.1
+- **New:** `pages.txt` on the SD card sets the coin layout at boot
+  (`P1: BTC, AVAX, SUI, ZEC`). Applied when the file's contents change, so layout edits made
+  in the picker survive a reboot.
+- **Fixed:** touch could misread while the SD card was being accessed — both sit on VSPI and
+  mounting the card re-muxes the bus away from the touch controller. One mutex now covers
+  both, and each SD session re-inits touch before releasing.
+- **Fixed:** a failed `/coins/markets` parse now falls through to the cache instead of
+  leaving the screen without data, and an empty result is never written over a good cache.
+- **Changed:** the cache is binary — 15.5 KB for 20 coins instead of ~79 KB of JSON, with no
+  parser needed to read it back. The old `cache/btc.json` is ignored.
+- **Changed:** the parsed document is filtered to the nine fields the UI reads (CoinGecko
+  sends 28).
+
+See the [releases page](https://github.com/xXQuantumSmokeXx/xXCYD-Crypto-TrackerXx/releases)
+for earlier versions.
 
 ## Credits
 

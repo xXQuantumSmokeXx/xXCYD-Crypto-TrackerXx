@@ -1,0 +1,5 @@
+# Page layout for CYD-Crypto-Tracker
+# P<n>: coin, coin, coin, coin   (5 pages, max 4 coins each)
+# CoinGecko id or symbol, case-insensitive. Pages not listed are cleared.
+P1: BTC, AVAX, SUI, ZEC
+P2: ICP, STRK, JUP, ADA
