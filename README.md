@@ -173,6 +173,14 @@ sd_card/
 
 ## Changelog
 
+### v1.1.4 (unreleased)
+- **Changed:** battery % settles faster (EMA alpha 0.12 → 0.25) and no longer flickers —
+  a ±2% display hysteresis holds the shown value until the reading is two points away.
+- **Changed:** the battery is sampled on a 10-second tick instead of inside every status-bar
+  redraw. That read is 50 ADC samples, about 50 ms, paid on every full refresh before.
+- **Deliberately not changed:** the sag offset stays at 30 mV. A larger constant would bias
+  the gauge high when idle; sag that only appears under load needs a quiet-radio sample.
+
 ### v1.1.3
 - **Fixed:** the UI could draw a coin while the fetch worker was rewriting it on the other
   core — a torn price or a half-copied name. Reads now copy the coin under a lock.

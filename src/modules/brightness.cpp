@@ -14,8 +14,12 @@
 #ifndef BATT_SAG_OFFSET_MV
 #define BATT_SAG_OFFSET_MV  30      // mV to offset WiFi TX load sag
 #endif
-#define BATT_EMA_ALPHA       0.12f  // EMA smoothing (lower = less jitter)
+// Raised 0.12 -> 0.25 (2026-10-25). At 0.12 each refresh closed only 12% of the gap, so the
+// gauge took ~40 s to settle and read as steady draining while it was really chasing load
+// sag. The hysteresis below is what keeps the faster tracker from flickering.
+#define BATT_EMA_ALPHA       0.25f
 #define BATT_SAMPLES         50     // ADC averaging samples
+#define BATT_HYSTERESIS_PCT  2      // shown % only moves when the reading is this far off
 
 static const uint8_t s_vals[BRI_LEVELS] = { 0, 60, 100, 150, 200, 255 };
 static int s_level = 0;
@@ -69,7 +73,12 @@ void brightnessOff() {
     applyBri(0);
 }
 
-int batteryPct() {
+// Last sampled value. Written only by batteryPctSample(), read by the status bar: the ADC
+// read is 50 samples with 1 ms gaps (~50 ms), which used to run inside every redraw. The
+// draw path reads this instead (2026-10-25).
+static volatile int s_batteryPct = -1;
+
+void batteryPctSample() {
     // Multi-sample averaging to reduce ESP32 ADC noise (50 samples)
     long sum = 0;
     for (int i = 0; i < BATT_SAMPLES; i++) {
@@ -78,7 +87,7 @@ int batteryPct() {
     }
     int pinMv = sum / BATT_SAMPLES;
 
-    if (pinMv < 100) return -1;  // near-zero mV = floating/disconnected
+    if (pinMv < 100) { s_batteryPct = -1; return; }  // near-zero mV = floating/disconnected
 
     // analogReadMilliVolts uses factory eFuse calibration — gives actual pin mV.
     // Apply sag compensation before divider multiplication so the offset scales.
@@ -118,5 +127,20 @@ int batteryPct() {
 
     if (pct < 0)   pct = 0;
     if (pct > 100) pct = 100;
-    return pct;
+
+    // Display hysteresis: hold the shown value until the reading is two points away, so ADC
+    // noise crossing a 0.1 V curve boundary does not redraw the gauge. Full and empty always
+    // pass straight through - a gauge must never sit at 1% while the cell is actually done.
+    static int s_shownPct = -1;
+    if (s_shownPct < 0 || abs(pct - s_shownPct) >= BATT_HYSTERESIS_PCT ||
+        pct == 0 || pct == 100) {
+        s_shownPct = pct;
+    }
+    s_batteryPct = s_shownPct;
+}
+
+// The value the UI draws. Sampling happens on a slow tick in loop() so the draw path never
+// pays for it.
+int batteryPct() {
+    return s_batteryPct;
 }

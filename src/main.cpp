@@ -578,6 +578,7 @@ void setup() {
     applyRotation();
     tft.fillScreen(COL_BG);
     brightnessInit();
+    batteryPctSample();   // seed the gauge before the first status bar draws it
 
     touchInit();
 
@@ -633,6 +634,15 @@ void loop() {
     if (millis() - lastLdr > 5000) {
         if (!s_backlightOff) brightnessAutoUpdate();
         lastLdr = millis();
+    }
+
+    // Battery sample on a slow tick. The read is 50 ADC samples with 1 ms gaps (~50 ms) and
+    // used to happen inside every status-bar redraw; the draw path now reads the cached
+    // value (2026-10-25).
+    static unsigned long lastBatt = 0;
+    if (millis() - lastBatt > 10000) {
+        lastBatt = millis();
+        batteryPctSample();
     }
 
     // Periodic crypto refresh — every 60 seconds if WiFi is up

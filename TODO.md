@@ -108,10 +108,17 @@ Tap-to-cycle through chart periods on single-coin view and detail screen.
 
 5. **Samples taken during WiFi TX bursts.** WiFi radio spikes current draw; sporadic low readings feed into the average.
 
-**Proposed fix (Layer 1 — low risk, high impact):**
-- Raise discharge EMA alpha 0.12 → 0.25
-- Increase BATT_SAG_OFFSET_MV 30mV → 100mV at pin (200mV at battery)
-- Add ±2% display hysteresis — only update on-screen if changed 2+ points
+**Layer 1 — applied 2026-10-25, except the sag change:**
+- [x] Raise discharge EMA alpha 0.12 → 0.25
+- [x] Add ±2% display hysteresis (full and empty always pass straight through)
+- [x] Move sampling off the draw path — `batteryPct()` ran 50 ADC samples (~50 ms) inside
+      every status-bar redraw; it now samples on a 10 s tick in `loop()` and the draw path
+      reads the cached value.
+- [ ] **Deliberately NOT done: BATT_SAG_OFFSET_MV 30 → 100 mV.** The offset is a constant
+      added to every reading, so +200 mV at the battery would pin the gauge near 100% at
+      rest (4.08 V idle + 0.2 V = 4.28 V, which the curve clamps). Sag that only exists
+      under load needs a sample taken with the radio quiet — that is Layer 3, not a bigger
+      constant.
 
 **Proposed fix (Layer 2 — smoother mapping):**
 - Replace 8-segment piecewise linear with smooth polynomial fit of real LiPo discharge curve
