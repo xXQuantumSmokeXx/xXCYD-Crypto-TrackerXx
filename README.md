@@ -173,7 +173,7 @@ sd_card/
 
 ## Changelog
 
-### v1.1.5 (unreleased)
+### v1.1.5
 - **New:** multi-period charts — 24H, 7D, 1M and 3M. A single-coin page cycles all four on
   tap; a multi-coin page opens that coin's detail chart on tap. 1M/3M come from
   `/coins/{id}/market_chart`, fetched on the worker and cached per coin+period on the SD card
