@@ -264,9 +264,15 @@ static void connectWifi() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, pass);
     unsigned long t = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t < 12000) delay(100);
+    while (WiFi.status() != WL_CONNECTED && millis() - t < 20000) delay(100);
     s_wifiOk = (WiFi.status() == WL_CONNECTED);
-    if (!s_wifiOk) showSplash("WiFi failed!");
+    if (!s_wifiOk) {
+        // Not a failure - loop() keeps checking and reconnects (2026-10-25). The old text
+        // said "WiFi failed!" after 12 s, which was simply untrue: the link often came up
+        // moments later and the screen worked, with the splash alarming the user for nothing.
+        Serial.println("WiFi: not associated after 20 s - supervision will keep trying");
+        showSplash("WiFi not up yet - retrying...");
+    }
 }
 
 // ── Screen navigation ─────────────────────────────────────────────────────
