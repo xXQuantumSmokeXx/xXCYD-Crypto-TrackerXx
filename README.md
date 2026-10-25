@@ -176,6 +176,11 @@ sd_card/
 
 ## Changelog
 
+### v1.1.6 (unreleased)
+- **New:** `/batt.csv` on the SD card, one line a minute — raw pin mV, cell voltage before
+  and after sag compensation, percentage and WiFi state. A discharge only happens off USB,
+  where there is no serial to watch, so this is how the battery curve gets measured.
+
 ### v1.1.5
 - **New:** multi-period charts — 24H, 7D, 1M and 3M. A single-coin page cycles all four on
   tap; a multi-coin page opens that coin's detail chart on tap. 1M/3M come from
