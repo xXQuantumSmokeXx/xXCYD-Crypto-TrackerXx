@@ -633,20 +633,28 @@ void setup() {
         // prices - which cryptoFetch() already falls back to by itself. So "no data" here
         // now means no network AND no cache, and the 60-second auto-refresh takes over
         // once the device is up.
+        //
+        // Prices only (2026-10-25): the full fetch also pulls sparklines, which now take
+        // several small requests, and none of that belongs in front of the first screen.
         bool gotData = false;
         for (int attempt = 0; attempt < 2 && !gotData; attempt++) {
             showSplash(attempt == 0 ? "Fetching crypto..." : "Retrying...");
-            gotData = cryptoFetch();
+            gotData = cryptoFetchPrices();
             if (!gotData) delay(1000);
         }
     } else {
-        // No WiFi: cryptoFetch() goes straight to the cache
-        cryptoFetch();
+        // No WiFi: the fetch goes straight to the cache
+        cryptoFetchPrices();
     }
 
     // Launch async fetch worker on Core 0
     xTaskCreatePinnedToCore(fetchWorker, "fetch", 20480, nullptr, 1, &s_fetchTask, 0);
     chartSetWakeHook(triggerChartFetch);   // the UI's chart requests wake this worker
+
+    // Sparklines were deliberately left out of the boot fetch above. Ask the worker for them
+    // now, in the background, rather than waiting for the 60-second tick - the screen is
+    // already usable with prices.
+    triggerFetch();
 
     ledSet(false, false, false);
     s_lastTouchMs = millis();

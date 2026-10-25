@@ -531,24 +531,10 @@ static void applyCoinsJson(JsonArray arr) {
 }
 
 // ── Network fetch: coins/markets ──────────────────────────────────────────
-static bool fetchCoins(bool withSparkline) {
-    const char *ids[COIN_MAX];
-    const int count = cryptoCollectActiveIds(ids, COIN_MAX);
-    if (count == 0) return false;
-
-    // Publish the new set, and mark any changed coin not-yet-valid, under the lock.
-    {
-        DataLock lock;
-        s_coinCount = count;
-        for (int i = 0; i < count; i++) {
-            bool isNew = (strcmp(s_coinCache[i].id, ids[i]) != 0);
-            strlcpy(s_coinCache[i].id, ids[i], sizeof(s_coinCache[i].id));
-            if (isNew) {
-                s_coinCache[i].valid = false;
-                s_coinCache[i].spark7dCount = 0;
-            }
-        }
-    }
+// One request over `count` ids. Separate from fetchCoins() because the sparkline work has to
+// be split into small requests - see SPARK_BATCH_MAX.
+static bool requestCoins(const char **ids, int count, bool withSparkline) {
+    if (count <= 0) return false;
 
     char idsStr[384] = "";
     for (int i = 0; i < count; i++) {
@@ -592,7 +578,10 @@ static bool fetchCoins(bool withSparkline) {
     DeserializationError err = deserializeJson(doc, json,
                                                DeserializationOption::Filter(filter));
     if (err) {
-        Serial.printf("coins/markets parse failed: %s\n", err.c_str());
+        // The byte count is the useful half of this line: IncompleteInput means the body was
+        // cut short, which is what an oversized response looks like on this device.
+        Serial.printf("coins/markets parse failed: %s (%u bytes, %u free)\n",
+                      err.c_str(), (unsigned)json.length(), (unsigned)ESP.getFreeHeap());
         return false;   // cryptoFetch falls through to the cache
     }
 
@@ -607,7 +596,58 @@ static bool fetchCoins(bool withSparkline) {
         DataLock lock;
         applyCoinsJson(coins);
     }
-    if (withSparkline) nvsPutInt("spark_fetched_at", (int)time(nullptr));
+    return true;
+}
+
+// CoinGecko sends ~4 KB per coin once sparklines are included, and HTTPClient's getString()
+// holds the whole body as one String before the filter ever sees it. A full set is ~80 KB,
+// and on the device that body comes back truncated - every attempt fails with
+// "IncompleteInput" - while the same URL answers in 0.2 s from a PC. The price-only body
+// (~17 KB) parses reliably and is what the minute refresh has always used, so that is the
+// size to stay near: prices in one request, sparklines four coins at a time
+// (2026-10-25). Without the SD cache present the failure was invisible until the card was
+// pulled - the old cache answered instead.
+#define SPARK_BATCH_MAX 4
+
+static bool fetchCoins(bool withSparkline) {
+    const char *ids[COIN_MAX];
+    const int count = cryptoCollectActiveIds(ids, COIN_MAX);
+    if (count == 0) return false;
+
+    // Publish the new set, and mark any changed coin not-yet-valid, under the lock.
+    {
+        DataLock lock;
+        s_coinCount = count;
+        for (int i = 0; i < count; i++) {
+            bool isNew = (strcmp(s_coinCache[i].id, ids[i]) != 0);
+            strlcpy(s_coinCache[i].id, ids[i], sizeof(s_coinCache[i].id));
+            if (isNew) {
+                s_coinCache[i].valid = false;
+                s_coinCache[i].spark7dCount = 0;
+            }
+        }
+    }
+
+    // Prices first, always, in one small request: every coin becomes drawable before the
+    // hourly sparkline work starts, so a boot with no cache does not sit on "Loading data...".
+    if (!requestCoins(ids, count, false)) return false;
+
+    if (withSparkline) {
+        int ok = 0, batches = 0;
+        for (int i = 0; i < count; i += SPARK_BATCH_MAX) {
+            int n = count - i;
+            if (n > SPARK_BATCH_MAX) n = SPARK_BATCH_MAX;
+            batches++;
+            if (requestCoins(ids + i, n, true)) ok++;
+            else Serial.printf("sparkline batch %d failed (ids %d-%d)\n", batches, i, i + n - 1);
+        }
+        // The timestamp alone must not bury a failed batch: needSparklineRefresh() also
+        // retries while any assigned coin still has no points.
+        if (ok > 0) nvsPutInt("spark_fetched_at", (int)time(nullptr));
+        Serial.printf("sparklines: %d/%d batch(es), %u bytes free\n",
+                      ok, batches, (unsigned)ESP.getFreeHeap());
+    }
+
     saveCacheToSD();
     s_fromCache = false;
     return true;
@@ -651,11 +691,11 @@ static bool needSparklineRefresh() {
     return false;
 }
 
-bool cryptoFetch() {
+static bool fetchWith(bool wantSparklines) {
     s_fromCache = false;
 
     if (WiFi.isConnected()) {
-        if (fetchCoins(needSparklineRefresh())) {
+        if (fetchCoins(wantSparklines)) {
             fetchFearGreed();
             return true;
         }
@@ -668,6 +708,9 @@ bool cryptoFetch() {
     }
     return false;
 }
+
+bool cryptoFetch()        { return fetchWith(needSparklineRefresh()); }
+bool cryptoFetchPrices()  { return fetchWith(false); }
 
 // ── Getters ───────────────────────────────────────────────────────────────
 bool cryptoCopyCoinData(const char *coinId, CoinData *out) {

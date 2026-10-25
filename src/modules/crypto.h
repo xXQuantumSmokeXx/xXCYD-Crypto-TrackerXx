@@ -59,11 +59,14 @@ int  cryptoGetNextEnabledPage(int current);                // next enabled page 
 int  cryptoGetPrevEnabledPage(int current);                // previous enabled page (wraps), or -1
 
 // ── API fetch ────────────────────────────────────────────────────────────
-// Fetch all coins across all active pages in one API call. Returns true when the screen
-// has data afterwards - live, or from the SD cache if the network is unavailable. There is
-// deliberately no "force": the network is always attempted when connected, and a failed
-// attempt falls through to the cache rather than invalidating it.
+// Fetch all coins across all active pages. Returns true when the screen has data afterwards -
+// live, or from the SD cache if the network is unavailable. There is deliberately no "force":
+// the network is always attempted when connected, and a failed attempt falls through to the
+// cache rather than invalidating it.
 bool cryptoFetch();
+// Prices only, one small request. Used at boot so the splash does not wait for the hourly
+// sparkline batches (~17 KB instead of ~80 KB; see SPARK_BATCH_MAX in crypto.cpp).
+bool cryptoFetchPrices();
 // ── Fear & Greed ─────────────────────────────────────────────────────────
 int  cryptoGetFearGreed();          // 0-100, -1 if unknown
 void cryptoGetFearGreedLabel(char *buf, size_t len);
