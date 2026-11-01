@@ -2,7 +2,7 @@
 
 Real-time cryptocurrency tracker for CYD devices — live prices, 24H/7D/1M/3M charts, Fear & Greed index, multi-page coin layout, offline SD caching, and intelligent power management.
 
-[![Support on Patreon](https://img.shields.io/badge/Support-Patreon-orange)](https://www.patreon.com/c/xXQuantumSmokeXx)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-xXSmokeXx-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/xXSmokeXx)
 
 ## Screenshots
 
